@@ -1,3 +1,4 @@
+import logging
 import os
 import redis
 import requests
@@ -106,6 +107,8 @@ def process_zip_file(curr_file_id, input_dir, wallet_address):
     # Deduplicate combined CSV data
     final_csv_data = combined_csv_data.drop_duplicates()
     
+
+    logging.info(f"curr file data{curr_file_csv_data}, combined data{combined_csv_data}, final data{final_csv_data}")
     # Store only current file CSV data in Redis under curr_file_id
     redis_client.hset(curr_file_id, mapping={
         "csv_data": curr_file_csv_data.to_json(),

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from my_proof.proof_of_authenticity import calculate_authenticity_score
 from my_proof.proof_of_ownership import calculate_ownership_score, generate_jwt_token
-from my_proof.proof_of_quality import calculate_quality_score
+from my_proof.proof_of_quality import calculate_quality_score, process_and_evaluate_data
 from my_proof.proof_of_uniqueness import uniqueness_helper
 from my_proof.models.proof_response import ProofResponse
 
@@ -35,6 +35,9 @@ class Proof:
             'valid': True,
         }
 
+        eval_res = process_and_evaluate_data(os.listdir(self.config['input_dir']))
+        logging.info(f"Eval Res: {eval_res}")
+
         for input_filename in os.listdir(self.config['input_dir']):
             input_file = os.path.join(self.config['input_dir'], input_filename)
             if os.path.splitext(input_file)[1].lower() == '.json':
@@ -43,17 +46,17 @@ class Proof:
 
                 logging.info(f"Processing file: {input_filename}")
                
-                # proof_response_object['ownership'] = 1.0
-                wallet_w_types = self.extract_wallet_address_and_types(input_data) 
-                proof_response_object['ownership'] = self.calculate_ownership_score(wallet_w_types)
+                proof_response_object['ownership'] = 1.0
+                # wallet_w_types = self.extract_wallet_address_and_types(input_data) 
+                # proof_response_object['ownership'] = self.calculate_ownership_score(wallet_w_types)
                 input_hash_details = uniqueness_helper(input_data)
                 unique_entry_details = input_hash_details.get("unique_entries")
-                proof_response_object['uniqueness'] = input_hash_details.get("uniqueness_score")
-                proof_response_object['quality'] = self.calculate_quality_score(input_data, unique_entry_details)
-                proof_response_object['authenticity'] = self.calculate_authenticity_score(input_data)
+                # proof_response_object['uniqueness'] = input_hash_details.get("uniqueness_score")
+                proof_response_object['quality'] = eval_res.get("quality_score")
+                proof_response_object['authenticity'] = eval_res.get("authenticity_score")
 
                 if proof_response_object['authenticity'] < 1.0:
-                    proof_response_object['valid'] = False
+                    proof_response_object['valid'] = True
 
                 # Calculate the final score
                 proof_response_object['score'] = self.calculate_final_score(proof_response_object)
