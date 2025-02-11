@@ -1,0 +1,3 @@
+author: 0x1059Ed65AD58ffc83642C9Be3f24C250905a28FB
+signature: 0x065d76f8d9a27d45cbbe78489bb57325ccbaf642535dfeb1d4552277ce9c12878454a7e97ca772b1397ac56d29e30e0cd7adee4561e6ce051b
+random_string: The signing key message

@@ -1,49 +1,60 @@
-import requests
 import logging
+import os
+from eth_account import Account
+from eth_account.messages import encode_defunct
 
-def generate_jwt_token(wallet_address: str, secret_key: str, expiration_time: int) -> str:
-    """Generate a JWT token for a given wallet address."""
-    from jwt import encode as jwt_encode
-    from datetime import datetime, timedelta, timezone
+def recover_account(author: str, signature: str, random_string: str) -> bool:
+    """
+    Recover Ethereum account from signature and verify ownership.
 
-    # Set the expiration time to 10 minutes from now
-    exp = datetime.now(timezone.utc) + timedelta(seconds=expiration_time)
-
-    payload = {
-        'exp': exp,
-        'walletAddress': wallet_address  # Send wallet address to the payload
-    }
-    
-    # Encode the JWT
-    token = jwt_encode(payload, secret_key, algorithm='HS256')
-    return token
-
-def calculate_ownership_score(jwt_token: str, data: dict, validator_url: str) -> float:
-    """Calculate ownership score by verifying data against an external API."""
-    if not jwt_token or not isinstance(jwt_token, str):
-        raise ValueError('JWT token is required and must be a string')
-    if not data.get('walletAddress') or len(data.get('types', [])) == 0:
-        raise ValueError('Invalid data format. Ensure walletAddress is a non-empty string and types is a non-empty array.')
+    :param author: Ethereum address of the supposed signer
+    :param signature: Signature to verify
+    :param random_string: Random string used for signing
+    :return: True if the recovered account matches the author, False otherwise
+    """
+    if not author or not signature or not random_string:
+        logging.error("Missing required fields: author, signature, or random_string")
+        return False
 
     try:
-        headers = {
-            'Authorization': f'Bearer {jwt_token}',  # Attach JWT token in the Authorization header
-        }
+        message_encoded = encode_defunct(text=random_string)
+        recovered_address = Account.recover_message(message_encoded, signature=signature)
+        
+        if recovered_address.lower() == author.lower():
+            logging.info(f"Ownership verified successfully for address: {recovered_address}")
+            return True
+        else:
+            logging.warning(f"Recovered address {recovered_address} does not match author {author}")
+            return False
+    except Exception as e:
+        logging.error(f"Error during recovery: {e}")
+        return False
 
-        endpoint = "/api/datavalidation"
-        url = f"{validator_url.rstrip('/')}{endpoint}"
+def read_params_from_file(file_path: str):
+    """
+    Read parameters from a text file.
 
-        response = requests.post(url, json=data, headers=headers)
+    :param file_path: Path to the text file
+    :return: Tuple containing author, signature, and random_string
+    """
+    params = {}
+    with open(file_path, "r") as file:
+        for line in file:
+            key, value = line.strip().split(": ", 1)
+            params[key] = value
+    return params["author"], params["signature"], params["random_string"]
 
-        response.raise_for_status()  # Raise an HTTPError for bad responses (4xx and 5xx)
-
-        return 1.0 if response.status_code == 200 else 0.0
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Error during API request: {e}")
+def verify_ownership(input_dir: str) -> float:
+    """Verify ownership by checking the signature in a .txt file."""
+    logging.info(f"Verifying ownership in directory: {input_dir}")
+    txt_files = [f for f in os.listdir(input_dir) if f.endswith('.txt')]
+    logging.info(f"Found {len(txt_files)} .txt file(s) for ownership verification.")
+    if not txt_files:
+        logging.warning("No .txt file found for ownership verification.")
         return 0.0
 
-    except requests.exceptions.HTTPError as error:
-        logging.error(f"API call failed: {error}")
-        if error.response.status_code == 400:
-            return 0.0
-        raise ValueError(f'API call failed: {error.response.json().get("error", str(error))}')
+    txt_file_path = os.path.join(input_dir, txt_files[0])
+    author, signature, random_string = read_params_from_file(txt_file_path)
+    logging.info(f" author: {author} signature: {signature}, env_sign: {os.environ.get("SIGNATURE")} random_string {random_string}")
+    is_valid = recover_account(author, signature, random_string) and os.environ.get("SIGNATURE") == signature
+    return 1.0 if is_valid else 0.0

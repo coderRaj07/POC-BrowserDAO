@@ -9,13 +9,12 @@ import numpy as np
 from datetime import datetime, timedelta, timezone
 
 from my_proof.proof_of_quality_n_authenticity import process_files_for_quality_n_authenticity_scores
-# from my_proof.proof_of_uniqueness import uniqueness_helper
 from my_proof.models.proof_response import ProofResponse
 from my_proof.proof_of_uniqueness import process_files_for_uniqueness
+from my_proof.proof_of_ownership import verify_ownership  # Import the verify_ownership function
 
 # Ensure logging is configured
 logging.basicConfig(level=logging.INFO)
-
 
 CONTRIBUTION_THRESHOLD = 4
 EXTRA_POINTS = 5
@@ -36,7 +35,6 @@ class Proof:
         file_id = self.config.get('file_id') or 118
         logging.info(f"Processing file ID: {file_id}")
         uniqueness_details = process_files_for_uniqueness(file_id, self.config['input_dir'], '0x1234')
-        
         quality_n_authenticity_details = process_files_for_quality_n_authenticity_scores(uniqueness_details.get("unique_csv_data"), uniqueness_details.get("unique_json_data"), uniqueness_details.get("unique_yaml_data"))
 
         for input_filename in os.listdir(self.config['input_dir']):
@@ -47,9 +45,7 @@ class Proof:
 
                 logging.info(f"Processing file: {input_filename}")
                
-                proof_response_object['ownership'] = 1.0
-                # wallet_w_types = self.extract_wallet_address_and_types(input_data) 
-                # proof_response_object['ownership'] = self.calculate_ownership_score(wallet_w_types)
+                proof_response_object['ownership'] = verify_ownership(self.config['input_dir'])
                 proof_response_object['uniqueness'] = uniqueness_details.get("uniqueness_score")
                 proof_response_object['quality'] = quality_n_authenticity_details.get("quality_score")
                 proof_response_object['authenticity'] = quality_n_authenticity_details.get("authenticity_score")
@@ -68,48 +64,7 @@ class Proof:
         logging.info(f"Proof response: {proof_response_object}")
         return proof_response_object
 
-    def generate_jwt_token(self, wallet_address):
-        secret_key = self.config.get('jwt_secret_key', 'default_secret')
-        expiration_time = self.config.get('jwt_expiration_time', 16000)  # Set to 10 minutes (600 seconds)
-        
-        # Set the expiration time to 10 minutes from now
-        exp = datetime.now(timezone.utc) + timedelta(seconds=expiration_time)
-        
-        payload = {
-            'exp': exp,
-            'walletAddress': wallet_address  # Add wallet address to the payload
-        }
-        
-        # Encode the JWT
-        token = jwt_encode(payload, secret_key, algorithm='HS256')
-        return token
 
-    def extract_wallet_address_and_types(self, input_data):
-        wallet_address = input_data.get('walletAddress')
-        types = [contribution.get('type') for contribution in input_data.get('contribution', [])]
-        return  {'walletAddress': wallet_address, 'types': types}
-
-    # def calculate_authenticity_score(self, input_data: Dict[str, Any]) -> float:
-    #     """Calculate authenticity score."""
-    #     contributions = input_data.get('contribution', [])
-    #     valid_domains = ["wss://witness.reclaimprotocol.org/ws", "reclaimprotocol.org"]
-    #     return calculate_authenticity_score(contributions, valid_domains)
-
-    # def calculate_ownership_score(self, input_data: Dict[str, Any]) -> float:
-    #     """Calculate ownership score."""
-    #     wallet_address = input_data.get('walletAddress')
-    #     types = input_data.get('types', [])
-    #     data = {
-    #         'walletAddress': wallet_address,
-    #         'types': types
-    #     }
-        
-    #     jwt_token = generate_jwt_token(wallet_address, self.config.get('jwt_secret_key'), self.config.get('jwt_expiration_time', 16000))
-    #     return calculate_ownership_score(jwt_token, data, self.config.get('validator_base_api_url'))
-    
-    # def calculate_quality_score(self, input_data, unique_entries):
-    #     return calculate_quality_score(input_data, self.config, unique_entries)
-    
     def calculate_final_score(self, proof_response_object: Dict[str, Any]) -> float:
         attributes = ['authenticity', 'uniqueness', 'quality', 'ownership']
         weights = {
