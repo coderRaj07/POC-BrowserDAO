@@ -8,4 +8,5 @@ deepdiff
 beautifulsoup4
 pyyaml
 jinja2
+eth_account
 python-gnupg
