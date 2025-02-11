@@ -5,4 +5,7 @@ pandas
 numpy
 redis
 deepdiff
+beautifulsoup4
+pyyaml
+jinja2
 python-gnupg
