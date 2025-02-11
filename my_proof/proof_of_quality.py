@@ -7,7 +7,6 @@ from typing import List, Dict, Any, Optional, Union
 from collections import Counter
 from dateutil import parser
 
-from my_proof.proof_of_uniqueness import process_files
 
 # Constants as provided
 class Constants:
@@ -443,28 +442,62 @@ class AndroidLocationHistoryValidator:
         return final_score
 
 
-def integrate_process_and_evaluate(curr_file_id, wallet_address):
-    # Process files to get unique CSV and JSON data
-    unique_csv_data, unique_json_data = process_files(curr_file_id, wallet_address)
-    
+def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json_data):
+
+    if unique_csv_data is None or unique_csv_data.empty:
+        total_csv_entries = 0
+    else:
+        total_csv_entries = unique_csv_data.drop_duplicates().shape[0]
+
+    if not unique_json_data or not isinstance(unique_json_data, list) or not unique_json_data[0]:
+        semantic_segments_data = []
+        total_json_entries = 0
+    else:
+        logging.info(f"unique json data: {unique_json_data[0].get('semanticSegments')}")
+        semantic_segments_data = unique_json_data[0].get("semanticSegments", [])
+        total_json_entries = len(semantic_segments_data)
+
     # Validate JSON data using AndroidLocationHistoryValidator
-    validator = AndroidLocationHistoryValidator()
-    validation_score = validator.validate(unique_json_data)
-    
+    location_history_quality_score = 0.0
+    location_history_authenticity_score = 0.0
+    if total_json_entries > 0:
+        validator = AndroidLocationHistoryValidator()
+        location_history_quality_score = validator.validate(semantic_segments_data)
+        location_history_authenticity_score = 1.0  # Default authenticity score for location data
+
     # Evaluate unique CSV data using process_and_evaluate_data
-    evaluation_results = process_and_evaluate_data(unique_csv_data)
-    
-    logging.info(f"Validation score: {validation_score}, Evaluation results: {evaluation_results}")
+    browser_history_quality_score = 0.0
+    browser_history_authenticity_score = 0.0
+    if total_csv_entries > 0:
+        browser_history_score_details = process_and_evaluate_data(unique_csv_data)
+        browser_history_quality_score = browser_history_score_details.get("quality_score", 0)
+        browser_history_authenticity_score = browser_history_score_details.get("authenticity_score", 0)
 
+    # Determine final quality and authenticity scores
+    final_quality_score = 0.0
+    final_authenticity_score = 0.0
+
+    if total_csv_entries > 0 and total_json_entries > 0:
+        final_quality_score = (
+            (browser_history_quality_score * total_csv_entries) + (location_history_quality_score * total_json_entries)
+        ) / (total_csv_entries + total_json_entries)
+
+        final_authenticity_score = (
+            (browser_history_authenticity_score * total_csv_entries) + (location_history_authenticity_score * total_json_entries)
+        ) / (total_csv_entries + total_json_entries)
+
+    elif total_csv_entries > 0:
+        final_quality_score = browser_history_quality_score
+        final_authenticity_score = browser_history_authenticity_score
+
+    elif total_json_entries > 0:
+        final_quality_score = location_history_quality_score
+        final_authenticity_score = location_history_authenticity_score
+
+    logging.info(f"Final Quality Score: {final_quality_score}, Final Authenticity Score: {final_authenticity_score}, Total CSV Entries: {total_csv_entries}, Total JSON Entries: {total_json_entries}, Browser History Quality Score: {browser_history_quality_score}, Browser History Authenticity Score: {browser_history_authenticity_score}, Location History Quality Score: {location_history_quality_score}, Location History Authenticity Score: {location_history_authenticity_score}")
+
+    # Return final scores
     return {
-        "validation_score": validation_score,
-        "evaluation_results": evaluation_results
+        "quality_score": final_quality_score,
+        "authenticity_score": final_authenticity_score
     }
-
-if __name__ == "__main__":
-    with open("android-location-history.json", "r") as f:
-        data = json.load(f)
-
-    validator = AndroidLocationHistoryValidator()
-    results = validator.validate(data)
-    print(results) 

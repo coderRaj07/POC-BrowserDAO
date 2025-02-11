@@ -74,7 +74,7 @@ def extract_files_from_zip(zip_data):
     return combined_csv_data, json_data_list
 
 # Main processing function
-def process_files(curr_file_id, input_dir, wallet_address):
+def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
     gpg_signature = os.environ.get("SIGN")
     redis_client = get_redis_client()
     combined_csv_data = pd.DataFrame()
@@ -92,7 +92,7 @@ def process_files(curr_file_id, input_dir, wallet_address):
                 stored_csv_data = redis_client.hget(file_id, "browser_history_csv_data")
                 stored_json_data = redis_client.hget(file_id, "location_history_json_data")
                 if stored_csv_data:
-                    df = pd.read_json(stored_csv_data)
+                    df = pd.read_json(io.StringIO(stored_csv_data))
                     combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
                 if stored_json_data:
                     json_data = json.loads(stored_json_data)

@@ -10,10 +10,10 @@ from datetime import datetime, timedelta, timezone
 
 # from my_proof.proof_of_authenticity import calculate_authenticity_score
 # from my_proof.proof_of_ownership import calculate_ownership_score, generate_jwt_token
-from my_proof.proof_of_quality import  process_and_evaluate_data
+from my_proof.proof_of_quality import process_files_for_quality_n_authenticity_scores
 # from my_proof.proof_of_uniqueness import uniqueness_helper
 from my_proof.models.proof_response import ProofResponse
-from my_proof.proof_of_uniqueness import process_files
+from my_proof.proof_of_uniqueness import process_files_for_uniqueness
 
 # Ensure logging is configured
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +36,9 @@ class Proof:
             'valid': True,
         }
 
-        # eval_res = process_and_evaluate_data('./demo/input' )
-        process_zip_res = process_files(118, self.config['input_dir'], '0x1234')
-        # logging.info(f"Eval Res: {eval_res}, Process Zip Res: {process_zip_res}")
+        uniqueness_details = process_files_for_uniqueness(116, self.config['input_dir'], '0x1234')
+        
+        quality_n_authenticity_details = process_files_for_quality_n_authenticity_scores(uniqueness_details.get("unique_csv_data"), uniqueness_details.get("unique_json_data"))
 
         for input_filename in os.listdir(self.config['input_dir']):
             input_file = os.path.join(self.config['input_dir'], input_filename)
@@ -51,11 +51,9 @@ class Proof:
                 proof_response_object['ownership'] = 1.0
                 # wallet_w_types = self.extract_wallet_address_and_types(input_data) 
                 # proof_response_object['ownership'] = self.calculate_ownership_score(wallet_w_types)
-                # input_hash_details = uniqueness_helper(input_data)
-                # unique_entry_details = input_hash_details.get("unique_entries")
-                # proof_response_object['uniqueness'] = input_hash_details.get("uniqueness_score")
-                proof_response_object['quality'] = 1.0
-                proof_response_object['authenticity'] = 1.0
+                proof_response_object['uniqueness'] = uniqueness_details.get("uniqueness_score")
+                proof_response_object['quality'] = quality_n_authenticity_details.get("quality_score")
+                proof_response_object['authenticity'] = quality_n_authenticity_details.get("authenticity_score")
 
                 if proof_response_object['authenticity'] < 1.0:
                     proof_response_object['valid'] = True
