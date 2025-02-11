@@ -6,8 +6,10 @@ WORKDIR /app
 
 COPY . /app
 
-# Install python-gnupg
-RUN pip install --no-cache-dir python-gnupg
+# Install gpg and python-gnupg
+RUN apt-get update && apt-get install -y gnupg && \
+    pip install --no-cache-dir python-gnupg
+
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
