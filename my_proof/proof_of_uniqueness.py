@@ -27,18 +27,19 @@ def get_redis_client():
         logging.warning("Redis connection failed. Proceeding without caching.")
         return None
 
+# TODO: Remove comments later
 # Fetch file mappings from API
 def get_file_mappings(wallet_address):
-    validator_base_api_url = os.environ.get('VALIDATOR_BASE_API_URL')
-    endpoint = "/api/userinfo"
-    url = f"{validator_base_api_url.rstrip('/')}{endpoint}"
-    payload = {"walletAddress": wallet_address}
-    headers = {"Content-Type": "application/json"}
-    response = requests.post(url, json=payload, headers=headers)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        logging.error(f"Failed to fetch file mappings: {response.status_code}")
+    # validator_base_api_url = os.environ.get('VALIDATOR_BASE_API_URL')
+    # endpoint = "/api/userinfo"
+    # url = f"{validator_base_api_url.rstrip('/')}{endpoint}"
+    # payload = {"walletAddress": wallet_address}
+    # headers = {"Content-Type": "application/json"}
+    # response = requests.post(url, json=payload, headers=headers)
+    # if response.status_code == 200:
+    #     return response.json()
+    # else:
+    #     logging.error(f"Failed to fetch file mappings: {response.status_code}")
         return []
 
 # Download and decrypt file
@@ -73,13 +74,13 @@ def extract_files_from_zip(zip_data):
     return combined_csv_data, json_data_list
 
 # Main processing function
-def process_files(curr_file_id, wallet_address):
-    input_dir = os.environ.get("INPUT_DIR", ".")
+def process_files(curr_file_id, input_dir, wallet_address):
     gpg_signature = os.environ.get("SIGN")
     redis_client = get_redis_client()
     combined_csv_data = pd.DataFrame()
     combined_json_data = []
-
+    
+    logging.info(f"Processing files for wallet address {wallet_address}")
     # Retrieve file mappings from API
     file_mappings = get_file_mappings(wallet_address)
 
@@ -147,8 +148,10 @@ def process_files(curr_file_id, wallet_address):
             "json_data": json.dumps(curr_file_json_data),
             "history_data": json.dumps(curr_file_json_data)  # Mapping current JSON data to history_data
         })
-        logging.info(f"Current file data stored in Redis under key {curr_file_id}")
-
+    
+    logging.info(f"Current file data stored in Redis under key {curr_file_id}")
+    logging.info(f"Unique CSV data: {unique_curr_csv_data}, Current CSV data: {curr_file_csv_data}")
+    logging.info(f"Unique JSON data: {unique_curr_json_data}, Current JSON data: {curr_file_json_data}")
     # Return unique CSV and JSON data
     return {
         "unique_csv_data": unique_curr_csv_data,

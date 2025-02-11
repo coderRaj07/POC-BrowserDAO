@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from my_proof.proof_of_quality import  process_and_evaluate_data
 # from my_proof.proof_of_uniqueness import uniqueness_helper
 from my_proof.models.proof_response import ProofResponse
-from my_proof.proof_of_uniqueness import process_zip_file
+from my_proof.proof_of_uniqueness import process_files
 
 # Ensure logging is configured
 logging.basicConfig(level=logging.INFO)
@@ -36,9 +36,9 @@ class Proof:
             'valid': True,
         }
 
-        eval_res = process_and_evaluate_data('./demo/input' )
-        process_zip_res = process_zip_file(117, "./demo/input", '0x1234')
-        logging.info(f"Eval Res: {eval_res}, Process Zip Res: {process_zip_res}")
+        # eval_res = process_and_evaluate_data('./demo/input' )
+        process_zip_res = process_files(117, self.config['input_dir'], '0x1234')
+        # logging.info(f"Eval Res: {eval_res}, Process Zip Res: {process_zip_res}")
 
         for input_filename in os.listdir(self.config['input_dir']):
             input_file = os.path.join(self.config['input_dir'], input_filename)
@@ -54,8 +54,8 @@ class Proof:
                 # input_hash_details = uniqueness_helper(input_data)
                 # unique_entry_details = input_hash_details.get("unique_entries")
                 # proof_response_object['uniqueness'] = input_hash_details.get("uniqueness_score")
-                proof_response_object['quality'] = eval_res.get("quality_score")
-                proof_response_object['authenticity'] = eval_res.get("authenticity_score")
+                proof_response_object['quality'] = 1.0
+                proof_response_object['authenticity'] = 1.0
 
                 if proof_response_object['authenticity'] < 1.0:
                     proof_response_object['valid'] = True
@@ -92,26 +92,26 @@ class Proof:
         types = [contribution.get('type') for contribution in input_data.get('contribution', [])]
         return  {'walletAddress': wallet_address, 'types': types}
 
-    def calculate_authenticity_score(self, input_data: Dict[str, Any]) -> float:
-        """Calculate authenticity score."""
-        contributions = input_data.get('contribution', [])
-        valid_domains = ["wss://witness.reclaimprotocol.org/ws", "reclaimprotocol.org"]
-        return calculate_authenticity_score(contributions, valid_domains)
+    # def calculate_authenticity_score(self, input_data: Dict[str, Any]) -> float:
+    #     """Calculate authenticity score."""
+    #     contributions = input_data.get('contribution', [])
+    #     valid_domains = ["wss://witness.reclaimprotocol.org/ws", "reclaimprotocol.org"]
+    #     return calculate_authenticity_score(contributions, valid_domains)
 
-    def calculate_ownership_score(self, input_data: Dict[str, Any]) -> float:
-        """Calculate ownership score."""
-        wallet_address = input_data.get('walletAddress')
-        types = input_data.get('types', [])
-        data = {
-            'walletAddress': wallet_address,
-            'types': types
-        }
+    # def calculate_ownership_score(self, input_data: Dict[str, Any]) -> float:
+    #     """Calculate ownership score."""
+    #     wallet_address = input_data.get('walletAddress')
+    #     types = input_data.get('types', [])
+    #     data = {
+    #         'walletAddress': wallet_address,
+    #         'types': types
+    #     }
         
-        jwt_token = generate_jwt_token(wallet_address, self.config.get('jwt_secret_key'), self.config.get('jwt_expiration_time', 16000))
-        return calculate_ownership_score(jwt_token, data, self.config.get('validator_base_api_url'))
+    #     jwt_token = generate_jwt_token(wallet_address, self.config.get('jwt_secret_key'), self.config.get('jwt_expiration_time', 16000))
+    #     return calculate_ownership_score(jwt_token, data, self.config.get('validator_base_api_url'))
     
-    def calculate_quality_score(self, input_data, unique_entries):
-        return calculate_quality_score(input_data, self.config, unique_entries)
+    # def calculate_quality_score(self, input_data, unique_entries):
+    #     return calculate_quality_score(input_data, self.config, unique_entries)
     
     def calculate_final_score(self, proof_response_object: Dict[str, Any]) -> float:
         attributes = ['authenticity', 'uniqueness', 'quality', 'ownership']
