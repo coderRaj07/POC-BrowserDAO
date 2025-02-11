@@ -37,7 +37,7 @@ class Proof:
         logging.info(f"Processing file ID: {file_id}")
         uniqueness_details = process_files_for_uniqueness(file_id, self.config['input_dir'], '0x1234')
         
-        quality_n_authenticity_details = process_files_for_quality_n_authenticity_scores(uniqueness_details.get("unique_csv_data"), uniqueness_details.get("unique_json_data"))
+        quality_n_authenticity_details = process_files_for_quality_n_authenticity_scores(uniqueness_details.get("unique_csv_data"), uniqueness_details.get("unique_json_data"), uniqueness_details.get("unique_yaml_data"))
 
         for input_filename in os.listdir(self.config['input_dir']):
             input_file = os.path.join(self.config['input_dir'], input_filename)

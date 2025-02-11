@@ -442,7 +442,7 @@ class AndroidLocationHistoryValidator:
         return final_score
 
 
-def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json_data):
+def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json_data, unique_yaml_data):
 
     if unique_csv_data is None or unique_csv_data.empty:
         total_csv_entries = 0
@@ -456,6 +456,11 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
         logging.info(f"unique json data: {unique_json_data[0].get('semanticSegments')}")
         semantic_segments_data = unique_json_data[0].get("semanticSegments", [])
         total_json_entries = len(semantic_segments_data)
+    
+    if not unique_yaml_data or not isinstance(unique_yaml_data, list) or not unique_yaml_data[0]:
+        total_yaml_entries = 0
+    else:
+        total_yaml_entries = len(unique_yaml_data[0])
 
     # Validate JSON data using AndroidLocationHistoryValidator
     location_history_quality_score = 0.0
@@ -473,18 +478,33 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
         browser_history_quality_score = browser_history_score_details.get("quality_score", 0)
         browser_history_authenticity_score = browser_history_score_details.get("authenticity_score", 0)
 
+    # Evaluate quality of YAML data
+    if total_yaml_entries > 10:
+        yaml_quality_score = 1.0 
+    elif 4 < total_yaml_entries <= 9:
+        yaml_quality_score = 1.0 * 0.5
+    elif 1 < total_yaml_entries <= 4:
+        yaml_quality_score = 1.0 * 0.10
+    else:
+        yaml_quality_score = 0.0
+
+    if yaml_quality_score > 0 : 
+        yaml_authenticity_score = 1.0
+    else:
+        yaml_authenticity_score = 0.0
+
     # Determine final quality and authenticity scores
     final_quality_score = 0.0
     final_authenticity_score = 0.0
 
     if total_csv_entries > 0 and total_json_entries > 0:
         final_quality_score = (
-            (browser_history_quality_score * total_csv_entries) + (location_history_quality_score * total_json_entries)
-        ) / (total_csv_entries + total_json_entries)
+            (browser_history_quality_score * total_csv_entries) + (location_history_quality_score * total_json_entries) + (yaml_quality_score * total_yaml_entries)
+        ) / (total_csv_entries + total_json_entries + total_yaml_entries)
 
         final_authenticity_score = (
-            (browser_history_authenticity_score * total_csv_entries) + (location_history_authenticity_score * total_json_entries)
-        ) / (total_csv_entries + total_json_entries)
+            (browser_history_authenticity_score * total_csv_entries) + (location_history_authenticity_score * total_json_entries + yaml_authenticity_score * total_yaml_entries)
+        ) / (total_csv_entries + total_json_entries + total_yaml_entries)
 
     elif total_csv_entries > 0:
         final_quality_score = browser_history_quality_score
@@ -493,8 +513,12 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
     elif total_json_entries > 0:
         final_quality_score = location_history_quality_score
         final_authenticity_score = location_history_authenticity_score
+    
+    elif total_yaml_entries > 0:
+        final_quality_score = yaml_quality_score
+        final_authenticity_score = yaml_authenticity_score
 
-    logging.info(f"Final Quality Score: {final_quality_score}, Final Authenticity Score: {final_authenticity_score}, Total CSV Entries: {total_csv_entries}, Total JSON Entries: {total_json_entries}, Browser History Quality Score: {browser_history_quality_score}, Browser History Authenticity Score: {browser_history_authenticity_score}, Location History Quality Score: {location_history_quality_score}, Location History Authenticity Score: {location_history_authenticity_score}")
+    logging.info(f"Final Quality Score: {final_quality_score}, Final Authenticity Score: {final_authenticity_score}, Total CSV Entries: {total_csv_entries}, Total JSON Entries: {total_json_entries}, Browser History Quality Score: {browser_history_quality_score}, Browser History Authenticity Score: {browser_history_authenticity_score}, Location History Quality Score: {location_history_quality_score}, Location History Authenticity Score: {location_history_authenticity_score}, Total YAML Entries: {total_yaml_entries}, YAML Quality Score: {yaml_quality_score}, YAML Authenticity Score: {yaml_authenticity_score}")
 
     # Return final scores
     return {
