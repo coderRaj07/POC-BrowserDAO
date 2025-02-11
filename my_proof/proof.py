@@ -30,11 +30,12 @@ class Proof:
         logging.info("Starting proof generation")
 
         proof_response_object = {
-            'dlp_id': self.config.get('dlp_id', '24'),
+            'dlp_id': self.config.get('dlp_id', '24'), # TODO: change this
             'valid': True,
         }
-
-        uniqueness_details = process_files_for_uniqueness(116, self.config['input_dir'], '0x1234')
+        file_id = self.config.get('file_id') or 118
+        logging.info(f"Processing file ID: {file_id}")
+        uniqueness_details = process_files_for_uniqueness(file_id, self.config['input_dir'], '0x1234')
         
         quality_n_authenticity_details = process_files_for_quality_n_authenticity_scores(uniqueness_details.get("unique_csv_data"), uniqueness_details.get("unique_json_data"))
 

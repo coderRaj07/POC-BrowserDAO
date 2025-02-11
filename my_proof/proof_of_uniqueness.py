@@ -40,7 +40,7 @@ def get_file_mappings(wallet_address):
     #     return response.json()
     # else:
     #     logging.error(f"Failed to fetch file mappings: {response.status_code}")
-        return [{"fileId":117, "fileUrl":""}]
+        return [{"fileId":116, "fileUrl":""}]
 
 # Download and decrypt file
 def download_and_decrypt(file_url, gpg_signature):
