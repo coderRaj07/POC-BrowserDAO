@@ -8,11 +8,12 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
 
-from my_proof.proof_of_authenticity import calculate_authenticity_score
-from my_proof.proof_of_ownership import calculate_ownership_score, generate_jwt_token
-from my_proof.proof_of_quality import calculate_quality_score, process_and_evaluate_data
-from my_proof.proof_of_uniqueness import uniqueness_helper
+# from my_proof.proof_of_authenticity import calculate_authenticity_score
+# from my_proof.proof_of_ownership import calculate_ownership_score, generate_jwt_token
+from my_proof.proof_of_quality import  process_and_evaluate_data
+# from my_proof.proof_of_uniqueness import uniqueness_helper
 from my_proof.models.proof_response import ProofResponse
+from my_proof.proof_of_uniqueness import process_zip_file
 
 # Ensure logging is configured
 logging.basicConfig(level=logging.INFO)
@@ -35,8 +36,9 @@ class Proof:
             'valid': True,
         }
 
-        eval_res = process_and_evaluate_data(os.listdir(self.config['input_dir']))
-        logging.info(f"Eval Res: {eval_res}")
+        eval_res = process_and_evaluate_data('./demo/input' )
+        process_zip_res = process_zip_file(117, "./demo/input", '0x1234')
+        logging.info(f"Eval Res: {eval_res}, Process Zip Res: {process_zip_res}")
 
         for input_filename in os.listdir(self.config['input_dir']):
             input_file = os.path.join(self.config['input_dir'], input_filename)
@@ -49,8 +51,8 @@ class Proof:
                 proof_response_object['ownership'] = 1.0
                 # wallet_w_types = self.extract_wallet_address_and_types(input_data) 
                 # proof_response_object['ownership'] = self.calculate_ownership_score(wallet_w_types)
-                input_hash_details = uniqueness_helper(input_data)
-                unique_entry_details = input_hash_details.get("unique_entries")
+                # input_hash_details = uniqueness_helper(input_data)
+                # unique_entry_details = input_hash_details.get("unique_entries")
                 # proof_response_object['uniqueness'] = input_hash_details.get("uniqueness_score")
                 proof_response_object['quality'] = eval_res.get("quality_score")
                 proof_response_object['authenticity'] = eval_res.get("authenticity_score")

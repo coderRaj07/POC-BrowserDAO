@@ -7,7 +7,7 @@ WORKDIR /app
 COPY . /app
 
 # Install python-gnupg
-RUN pip install --no-cache-dir python-gnupg
+RUN pip install --no-cache-dir python-gnupg deepdiff
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
