@@ -263,10 +263,14 @@ def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
     if not combined_csv_data.empty:
         combined_csv_data["DateTime"] = pd.to_datetime(combined_csv_data["DateTime"], utc=True)
 
-    # Find unique entries in curr_file_csv_data that are not in combined_csv_data
+    # Find unique entries in curr_file_csv_data that are not in combined_csv_data and curr_file_csv_data exists
     unique_curr_csv_data = curr_file_csv_data
     if not combined_csv_data.empty:
-        unique_curr_csv_data = curr_file_csv_data.merge(combined_csv_data, how="left", indicator=True).query('_merge == "left_only"').drop(columns=["_merge"])
+        common_columns = curr_file_csv_data.columns.intersection(combined_csv_data.columns)
+        if not common_columns.empty:
+            unique_curr_csv_data = curr_file_csv_data.merge(combined_csv_data[common_columns], how="left", indicator=True).query('_merge == "left_only"').drop(columns=["_merge"])
+        else:
+            logging.warning("No common columns found between current and combined CSV data. Skipping merge operation.")
 
     # Identify unique JSON entries
     unique_curr_json_data = []
