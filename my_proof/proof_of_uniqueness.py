@@ -27,7 +27,6 @@ def get_redis_client():
         logging.warning("Redis connection failed. Proceeding without caching.")
         return None
 
-# TODO: Remove comments later
 # Fetch file mappings from API
 def get_file_mappings(wallet_address):
     # validator_base_api_url = os.environ.get('VALIDATOR_BASE_API_URL')
@@ -40,7 +39,7 @@ def get_file_mappings(wallet_address):
     #     return response.json()
     # else:
     #     logging.error(f"Failed to fetch file mappings: {response.status_code}")
-        return [{"fileId":1607662, "fileUrl":"https://drive.google.com/uc?export=download&id=1J3Lux-VZHPfUSMv6Hqh5Zf0iGPOOSsxZ"}]
+    return [{"fileId":1607662, "fileUrl":"https://drive.google.com/uc?export=download&id=1J3Lux-VZHPfUSMv6Hqh5Zf0iGPOOSsxZ"}]
 
 # Download and decrypt file
 def download_and_decrypt(file_url, gpg_signature):
@@ -97,11 +96,43 @@ def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
                 if stored_json_data:
                     json_data = json.loads(stored_json_data)
                     combined_json_data.extend(json_data)
+                if not stored_csv_data and not stored_json_data:
+                    file_url = file_info.get("fileUrl")
+                    if not file_url:
+                        logging.warning(f"Skipping invalid fileUrl for fileId {file_id}")
+                        continue
+                    decrypted_data = download_and_decrypt(file_url, gpg_signature)
+                    if not decrypted_data:  # Skip if download failed
+                        logging.warning(f"Skipping file {file_url} due to download error.")
+                        continue  # Move to the next file
+                    if decrypted_data:
+                        df, json_data_list = extract_files_from_zip(decrypted_data)
+                        combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
+                        combined_json_data.extend(json_data_list)
+            else:
+                file_url = file_info.get("fileUrl")
+                if not file_url:
+                    logging.warning(f"Skipping invalid fileUrl for fileId {file_id}")
+                    continue
+                decrypted_data = download_and_decrypt(file_url, gpg_signature)
+                if not decrypted_data:  # Skip if download failed
+                        logging.warning(f"Skipping file {file_url} due to download error.")
+                        continue  # Move to the next file
+                if decrypted_data:
+                    df, json_data_list = extract_files_from_zip(decrypted_data)
+                    combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
+                    combined_json_data.extend(json_data_list)
     else:
         # Download, decrypt, and extract files
         for file_info in file_mappings:
             file_url = file_info.get("fileUrl")
+            if not file_url:
+                logging.warning(f"Skipping invalid fileUrl for fileId {file_info.get('fileId')}")
+                continue
             decrypted_data = download_and_decrypt(file_url, gpg_signature)
+            if not decrypted_data:  # Skip if download failed
+                        logging.warning(f"Skipping file {file_url} due to download error.")
+                        continue  # Move to the next file
             if decrypted_data:
                 df, json_data_list = extract_files_from_zip(decrypted_data)
                 combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
