@@ -91,15 +91,12 @@ def process_files(curr_file_id, input_dir, wallet_address):
             if redis_client.exists(file_id):
                 stored_csv_data = redis_client.hget(file_id, "browser_history_csv_data")
                 stored_json_data = redis_client.hget(file_id, "location_history_json_data")
-                logging.info(f"Found cached data for file {file_id}, CSV: {stored_csv_data}, JSON: {stored_json_data}")
                 if stored_csv_data:
                     df = pd.read_json(stored_csv_data)
                     combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
-                    logging.info(f"combined_csv_data data for file {combined_csv_data} found in Redis")
                 if stored_json_data:
                     json_data = json.loads(stored_json_data)
                     combined_json_data.extend(json_data)
-                    logging.info(f"combined_json_data data for file {combined_json_data} found in Redis")
     else:
         # Download, decrypt, and extract files
         for file_info in file_mappings:
@@ -128,14 +125,15 @@ def process_files(curr_file_id, input_dir, wallet_address):
             curr_file_json_data.append(json_data)
 
     # Ensure both have the same datetime format
-    curr_file_csv_data["DateTime"] = pd.to_datetime(curr_file_csv_data["DateTime"], utc=True)
-    combined_csv_data["DateTime"] = pd.to_datetime(combined_csv_data["DateTime"], utc=True)
+    if not curr_file_csv_data.empty:
+        curr_file_csv_data["DateTime"] = pd.to_datetime(curr_file_csv_data["DateTime"], utc=True)
+    if not combined_csv_data.empty:
+        combined_csv_data["DateTime"] = pd.to_datetime(combined_csv_data["DateTime"], utc=True)
 
     # Find unique entries in curr_file_csv_data that are not in combined_csv_data
+    unique_curr_csv_data = curr_file_csv_data
     if not combined_csv_data.empty:
         unique_curr_csv_data = curr_file_csv_data.merge(combined_csv_data, how="left", indicator=True).query('_merge == "left_only"').drop(columns=["_merge"])
-    else:
-        unique_curr_csv_data = curr_file_csv_data
 
     # Identify unique JSON entries
     unique_curr_json_data = []
@@ -148,6 +146,27 @@ def process_files(curr_file_id, input_dir, wallet_address):
         if is_unique:
             unique_curr_json_data.append(curr_json)
 
+    # Calculate uniqueness scores
+    total_csv_entries = curr_file_csv_data.drop_duplicates().shape[0]
+    unique_csv_entries = unique_curr_csv_data.drop_duplicates().shape[0]
+    csv_uniqueness_score = unique_csv_entries / total_csv_entries if total_csv_entries > 0 else None
+
+    total_json_entries = len({json.dumps(entry, sort_keys=True) for entry in curr_file_json_data})
+    unique_json_entries = len({json.dumps(entry, sort_keys=True) for entry in unique_curr_json_data})
+    json_uniqueness_score = unique_json_entries / total_json_entries if total_json_entries > 0 else None
+
+    # Determine final uniqueness score
+    final_uniqueness_score = None
+    if csv_uniqueness_score is not None and json_uniqueness_score is not None:
+        # Normalize based on data volume
+        final_uniqueness_score = (
+            (csv_uniqueness_score * total_csv_entries) + (json_uniqueness_score * total_json_entries)
+        ) / (total_csv_entries + total_json_entries)
+    elif csv_uniqueness_score is not None:
+        final_uniqueness_score = csv_uniqueness_score
+    elif json_uniqueness_score is not None:
+        final_uniqueness_score = json_uniqueness_score
+
     # Cache current file data in Redis
     if redis_client:
         redis_client.hset(curr_file_id, mapping={
@@ -157,9 +176,14 @@ def process_files(curr_file_id, input_dir, wallet_address):
     
     logging.info(f"Current file data stored in Redis under key {curr_file_id}")
     logging.info(f"Unique CSV data: {unique_curr_csv_data}")
-    logging.info(f"Unique JSON data: {unique_curr_json_data}, Current JSON data: {curr_file_json_data}")
-    # Return unique CSV and JSON data
+    logging.info(f"Unique JSON data: {unique_curr_json_data}")
+    logging.info(f"Final Uniqueness Score: {final_uniqueness_score}")
+
+    # Return unique data and scores
     return {
         "unique_csv_data": unique_curr_csv_data,
-        "unique_json_data": unique_curr_json_data
+        "unique_json_data": unique_curr_json_data,
+        "curr_csv_data": curr_file_csv_data,
+        "curr_json_data": curr_file_json_data,
+        "uniqueness_score": final_uniqueness_score
     }
