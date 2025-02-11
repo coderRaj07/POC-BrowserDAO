@@ -40,7 +40,7 @@ def get_file_mappings(wallet_address):
     #     return response.json()
     # else:
     #     logging.error(f"Failed to fetch file mappings: {response.status_code}")
-        return []
+        return [{"fileId":117, "fileUrl":""}]
 
 # Download and decrypt file
 def download_and_decrypt(file_url, gpg_signature):
@@ -89,14 +89,17 @@ def process_files(curr_file_id, input_dir, wallet_address):
         for file_info in file_mappings:
             file_id = file_info.get("fileId")
             if redis_client.exists(file_id):
-                stored_csv_data = redis_client.hget(file_id, "csv_data")
-                stored_json_data = redis_client.hget(file_id, "json_data")
+                stored_csv_data = redis_client.hget(file_id, "browser_history_csv_data")
+                stored_json_data = redis_client.hget(file_id, "location_history_json_data")
+                logging.info(f"Found cached data for file {file_id}, CSV: {stored_csv_data}, JSON: {stored_json_data}")
                 if stored_csv_data:
                     df = pd.read_json(stored_csv_data)
                     combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
+                    logging.info(f"combined_csv_data data for file {combined_csv_data} found in Redis")
                 if stored_json_data:
                     json_data = json.loads(stored_json_data)
                     combined_json_data.extend(json_data)
+                    logging.info(f"combined_json_data data for file {combined_json_data} found in Redis")
     else:
         # Download, decrypt, and extract files
         for file_info in file_mappings:
@@ -124,9 +127,13 @@ def process_files(curr_file_id, input_dir, wallet_address):
             json_data = json.load(file)
             curr_file_json_data.append(json_data)
 
-    # Identify unique rows in current CSVs
+    # Ensure both have the same datetime format
+    curr_file_csv_data["DateTime"] = pd.to_datetime(curr_file_csv_data["DateTime"], utc=True)
+    combined_csv_data["DateTime"] = pd.to_datetime(combined_csv_data["DateTime"], utc=True)
+
+    # Find unique entries in curr_file_csv_data that are not in combined_csv_data
     if not combined_csv_data.empty:
-        unique_curr_csv_data = pd.concat([curr_file_csv_data, combined_csv_data, combined_csv_data]).drop_duplicates(keep=False)
+        unique_curr_csv_data = curr_file_csv_data.merge(combined_csv_data, how="left", indicator=True).query('_merge == "left_only"').drop(columns=["_merge"])
     else:
         unique_curr_csv_data = curr_file_csv_data
 
@@ -144,13 +151,12 @@ def process_files(curr_file_id, input_dir, wallet_address):
     # Cache current file data in Redis
     if redis_client:
         redis_client.hset(curr_file_id, mapping={
-            "csv_data": curr_file_csv_data.to_json(),
-            "json_data": json.dumps(curr_file_json_data),
-            "history_data": json.dumps(curr_file_json_data)  # Mapping current JSON data to history_data
+            "browser_history_csv_data": curr_file_csv_data.to_json(),
+            "location_history_json_data": json.dumps(curr_file_json_data),
         })
     
     logging.info(f"Current file data stored in Redis under key {curr_file_id}")
-    logging.info(f"Unique CSV data: {unique_curr_csv_data}, Current CSV data: {curr_file_csv_data}")
+    logging.info(f"Unique CSV data: {unique_curr_csv_data}")
     logging.info(f"Unique JSON data: {unique_curr_json_data}, Current JSON data: {curr_file_json_data}")
     # Return unique CSV and JSON data
     return {

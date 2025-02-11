@@ -37,7 +37,7 @@ class Proof:
         }
 
         # eval_res = process_and_evaluate_data('./demo/input' )
-        process_zip_res = process_files(117, self.config['input_dir'], '0x1234')
+        process_zip_res = process_files(118, self.config['input_dir'], '0x1234')
         # logging.info(f"Eval Res: {eval_res}, Process Zip Res: {process_zip_res}")
 
         for input_filename in os.listdir(self.config['input_dir']):
