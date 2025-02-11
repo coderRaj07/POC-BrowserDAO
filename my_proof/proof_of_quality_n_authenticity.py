@@ -190,7 +190,7 @@ def process_and_evaluate_data(unique_csv_data):
         raise Exception(f"Error processing browsing data: {str(e)}")
 
 
-class AndroidLocationHistoryValidator:
+class android_location_history_validator:
     def __init__(self, max_speed_m_s: float = 44.44, allowed_hierarchy_levels: List[int] = [0, 1, 2]):
         self.max_speed_m_s = max_speed_m_s
         self.allowed_hierarchy_levels = allowed_hierarchy_levels
@@ -462,11 +462,11 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
     else:
         total_yaml_entries = len(unique_yaml_data[0])
 
-    # Validate JSON data using AndroidLocationHistoryValidator
+    # Validate JSON data using android_location_history_validator
     location_history_quality_score = 0.0
     location_history_authenticity_score = 0.0
     if total_json_entries > 0:
-        validator = AndroidLocationHistoryValidator()
+        validator = android_location_history_validator()
         location_history_quality_score = validator.validate(semantic_segments_data)
         location_history_authenticity_score = 1.0  # Default authenticity score for location data
 
