@@ -40,7 +40,7 @@ def get_file_mappings(wallet_address):
     #     return response.json()
     # else:
     #     logging.error(f"Failed to fetch file mappings: {response.status_code}")
-        return [{"fileId":116, "fileUrl":""}]
+        return [{"fileId":1607662, "fileUrl":"https://drive.google.com/uc?export=download&id=1J3Lux-VZHPfUSMv6Hqh5Zf0iGPOOSsxZ"}]
 
 # Download and decrypt file
 def download_and_decrypt(file_url, gpg_signature):
@@ -75,7 +75,7 @@ def extract_files_from_zip(zip_data):
 
 # Main processing function
 def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
-    gpg_signature = os.environ.get("SIGN")
+    gpg_signature = os.environ.get("SIGNATURE")
     redis_client = get_redis_client()
     combined_csv_data = pd.DataFrame()
     combined_json_data = []
