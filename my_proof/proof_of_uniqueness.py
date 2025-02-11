@@ -46,7 +46,8 @@ def get_file_mappings(wallet_address):
     #     return response.json()  # Return JSON response
     # else:
     #     return []  # Return empty list in case of an error
-    return [{"fileId":1607662, "fileUrl":"https://drive.google.com/uc?export=download&id=1J3Lux-VZHPfUSMv6Hqh5Zf0iGPOOSsxZ"}]
+    return [{"fileId":1607662, "fileUrl":"https://drive.google.com/uc?export=download&id=1J3Lux-VZHPfUSMv6Hqh5Zf0iGPOOSsxZ"},
+            {"fileId":1607816, "fileUrl":"https://drive.google.com/uc?export=download&id=16xQSjQ1KGNwSJZTA84Ex2v6Z2IGAEDyo"}]
 
 # Download and decrypt file
 def download_and_decrypt(file_url, gpg_signature):

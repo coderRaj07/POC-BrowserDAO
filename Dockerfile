@@ -7,7 +7,7 @@ WORKDIR /app
 COPY . /app
 
 # Install python-gnupg
-RUN pip install --no-cache-dir python-gnupg deepdiff beautifulsoup4 pyyaml jinja2
+RUN pip install --no-cache-dir python-gnupg
 
 # Install any needed packages specified in requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
