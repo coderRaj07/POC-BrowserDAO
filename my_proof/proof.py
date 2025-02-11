@@ -8,9 +8,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone
 
-# from my_proof.proof_of_authenticity import calculate_authenticity_score
-# from my_proof.proof_of_ownership import calculate_ownership_score, generate_jwt_token
-from my_proof.proof_of_quality import process_files_for_quality_n_authenticity_scores
+from my_proof.proof_of_quality_n_authenticity import process_files_for_quality_n_authenticity_scores
 # from my_proof.proof_of_uniqueness import uniqueness_helper
 from my_proof.models.proof_response import ProofResponse
 from my_proof.proof_of_uniqueness import process_files_for_uniqueness
