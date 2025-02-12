@@ -1,8 +1,6 @@
 import logging
 import os
 from typing import Dict, Any
-from jwt import encode as jwt_encode
-
 
 from my_proof.proof_of_ownership import verify_ownership
 from my_proof.proof_of_quality_n_authenticity import process_files_for_quality_n_authenticity_scores
