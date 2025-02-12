@@ -440,9 +440,14 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
     location_history_quality_score = 0.0
     location_history_authenticity_score = 0.0
     if total_json_entries > 0:
-        validator = android_location_history_validator()
+        validator = android_location_history_validator(max_speed_m_s=44.44)
         location_history_quality_score = validator.validate(semantic_segments_data)
-        location_history_authenticity_score = 1.0  # Default authenticity score for location data
+
+        if location_history_quality_score < 0:
+            location_history_quality_score = 0.0
+            location_history_authenticity_score = 0.0
+        else:
+            location_history_authenticity_score = 1.0  # Default authenticity score for location data
 
     # Evaluate unique CSV data using process_and_evaluate_data
     browser_history_quality_score = 0.0
