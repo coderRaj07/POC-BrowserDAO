@@ -150,6 +150,22 @@ def process_html_files(input_dir):
             yaml_data_list.append(yaml.safe_load(yaml_data))
     return yaml_data_list
 
+# Convert CSV to required format
+def convert_csv_to_required_format(df):
+    required_columns = ["DateTime", "NavigatedToUrl", "PageTitle"]
+    if not all(col in df.columns for col in required_columns):
+        # Check for alternative columns
+        alternative_columns = ["url", "url_clean", "url_domain", "title", "time", "hour", "day_of_week", "is_weekend", "day_of_month", "week_of_month", "month_of_year", "total_history_days", "seconds_until_next_visit_url", "seconds_until_next_visit_url_clean", "seconds_until_next_visit_domain", "seconds_until_next_visit", "page_transition", "id", "ref_id", "is_local", "client_id", "updated_at"]
+        if all(col in df.columns for col in alternative_columns):
+            df["DateTime"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            df["NavigatedToUrl"] = df["url"]
+            df["PageTitle"] = df["title"]
+            df = df[["DateTime", "NavigatedToUrl", "PageTitle"]]
+        else:
+            logging.error("CSV does not have the required columns or alternative columns.")
+            return pd.DataFrame()
+    return df
+
 # Main processing function
 def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
     gpg_signature = os.environ.get("SIGNATURE")
@@ -243,6 +259,7 @@ def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
     for csv_file in local_csv_files:
         file_path = os.path.join(input_dir, csv_file)
         df = pd.read_csv(file_path)
+        df = convert_csv_to_required_format(df)
         curr_file_csv_data = pd.concat([curr_file_csv_data, df], ignore_index=True)
 
     # Process current input directory JSONs
