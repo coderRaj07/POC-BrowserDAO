@@ -10,10 +10,10 @@ from dateutil import parser
 
 # Constants as provided
 class Constants:
-    MIN_TIME_SPENT_MS = 2000
-    MAX_TIME_SPENT_MS = 7200000
-    REQUIRED_FIELDS = {'url', 'timeSpent', 'listOfActions'}
-    LONG_DURATION_THRESHOLD_MS = 300000
+    MIN_TIME_SPENT_MS = 2000  # 2 seconds
+    MAX_TIME_SPENT_MS = 7200000  # 2 hours
+    REQUIRED_FIELDS = {'url', 'timeSpent', 'title'}
+    LONG_DURATION_THRESHOLD_MS = 300000  # 5 minutes
     MAX_QUALITY_SCORE = 60
     MAX_AUTHENTICITY_SCORE = 40
     HIGH_QUALITY_THRESHOLD = 80
@@ -22,29 +22,20 @@ class Constants:
     K = 5
 
 def process_unique_csv_data(unique_csv_data):
-    """
-    Processes the unique CSV data DataFrame into the required format.
-    """
-    # Ensure 'DateTime' is in datetime format
     unique_csv_data['DateTime'] = pd.to_datetime(unique_csv_data['DateTime'])
-    
-    # Sort by DateTime in descending order
     unique_csv_data = unique_csv_data.sort_values('DateTime', ascending=False)
     
-    # Initialize the list to hold processed browsing data
     browsing_data = []
-    
     for i in range(len(unique_csv_data)):
         entry = {
             'url': unique_csv_data.iloc[i]['NavigatedToUrl'],
-            'timeSpent': 0,  # Will be calculated below
-            'listOfActions': []  # Initialize empty list of actions
+            'title': unique_csv_data.iloc[i]['PageTitle'],
+            'timeSpent': 0
         }
         
-        # Calculate time spent (difference between consecutive timestamps)
         if i < len(unique_csv_data) - 1:
             time_diff = (unique_csv_data.iloc[i]['DateTime'] - 
-                         unique_csv_data.iloc[i + 1]['DateTime']).total_seconds() * 1000
+                        unique_csv_data.iloc[i + 1]['DateTime']).total_seconds() * 1000
             entry['timeSpent'] = time_diff
         
         browsing_data.append(entry)
@@ -63,84 +54,67 @@ def sigmoid(x, k=Constants.K, x0=Constants.X0):
     return 1 / (1 + math.exp(-z))
 
 def evaluate_quality(browsing_data):
-    """
-    Evaluates the quality of the browsing data.
-    """
     quality_score = 0
-    max_quality_score = Constants.MAX_QUALITY_SCORE
     weights = {
-        'time_spent': 40,
-        'completeness': 10,
-        'action_engagement': 10
+        'time_spent': 30,
+        'completeness': 20,
+        'url_validity': 10
     }
 
     total_entries = len(browsing_data)
     valid_time_entries = 0
     completeness_issues = 0
-    action_engagement_score = 0
+    valid_urls = 0
 
     for entry in browsing_data:
-        # Completeness
-        if not Constants.REQUIRED_FIELDS.issubset(entry.keys()):
+        # Check completeness
+        if not all(field in entry for field in ['url', 'timeSpent', 'title']):
             completeness_issues += 1
             continue
 
-        # URL validation
-        if not is_valid_url(entry['url']):
-            completeness_issues += 1
-            continue
+        # Validate URL
+        if is_valid_url(entry['url']):
+            valid_urls += 1
 
-        # Time Spent Validation
-        time_spent = entry['timeSpent']
-        if Constants.MIN_TIME_SPENT_MS <= time_spent <= Constants.MAX_TIME_SPENT_MS:
+        # Validate time spent
+        if Constants.MIN_TIME_SPENT_MS <= entry['timeSpent'] <= Constants.MAX_TIME_SPENT_MS:
             valid_time_entries += 1
 
-        # Action Engagement
-        if entry['listOfActions']:
-            action_engagement_score += 1
-
-    # Calculate scores
     if total_entries > 0:
-        time_spent_ratio = valid_time_entries / total_entries
-        quality_score += time_spent_ratio * weights['time_spent']
+        quality_score += (valid_time_entries / total_entries) * weights['time_spent']
+        quality_score += ((total_entries - completeness_issues) / total_entries) * weights['completeness']
+        quality_score += (valid_urls / total_entries) * weights['url_validity']
 
-        completeness_ratio = (total_entries - completeness_issues) / total_entries
-        quality_score += completeness_ratio * weights['completeness']
-
-        action_engagement_ratio = action_engagement_score / total_entries
-        quality_score += action_engagement_ratio * weights['action_engagement']
-
-    return min(quality_score, max_quality_score) / 100
+    return min(quality_score, Constants.MAX_QUALITY_SCORE) / 100
 
 def evaluate_authenticity(browsing_data):
-    """
-    Evaluates the authenticity of the browsing data.
-    """
     authenticity_score = Constants.MAX_AUTHENTICITY_SCORE
     total_entries = len(browsing_data)
     short_visits = 0
-    long_visits_without_actions = 0
-
+    long_visits = 0
+    
+    # Check time patterns
     for entry in browsing_data:
         time_spent = entry.get('timeSpent', 0)
-        actions = entry.get('listOfActions', [])
-
+        
         if time_spent < Constants.MIN_TIME_SPENT_MS:
             short_visits += 1
-
-        if time_spent > Constants.LONG_DURATION_THRESHOLD_MS and not actions:
-            long_visits_without_actions += 1
+        if time_spent > Constants.LONG_DURATION_THRESHOLD_MS:
+            long_visits += 1
 
     if total_entries > 0:
+        # Penalize for short visits
         short_visit_ratio = short_visits / total_entries
-        short_visit_penalty = short_visit_ratio * 20
-        authenticity_score -= short_visit_penalty
+        authenticity_score -= short_visit_ratio * 20
+        
+        # Penalize for too many long visits
+        long_visit_ratio = long_visits / total_entries
+        if long_visit_ratio > 0.8:  # If more than 80% are long visits
+            authenticity_score -= 10
 
-    long_visit_penalty = long_visits_without_actions * 10
-    authenticity_score -= long_visit_penalty
+    return max(authenticity_score, 0) / 100
 
-    authenticity_score = max(authenticity_score, 0)
-    return authenticity_score / 100
+# Rest of the functions remain unchanged
 
 def compute_overall_score(quality_score, authenticity_score):
     """
