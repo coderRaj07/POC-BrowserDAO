@@ -592,6 +592,6 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
 
     # Return final scores
     return {
-        "quality_score": final_quality_score,
-        "authenticity_score": final_authenticity_score
+        "quality_score": round(final_quality_score, 3),
+        "authenticity_score": round(final_authenticity_score, 3)
     }
