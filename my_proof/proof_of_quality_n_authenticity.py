@@ -164,7 +164,7 @@ def process_and_evaluate_data(unique_csv_data):
         raise Exception(f"Error processing browsing data: {str(e)}")
 
 
-class android_location_history_validator:
+class location_history_validator:
     def __init__(self, max_speed_m_s: float = 44.44, allowed_hierarchy_levels: List[int] = [0, 1, 2]):
         self.max_speed_m_s = max_speed_m_s
         self.allowed_hierarchy_levels = allowed_hierarchy_levels
@@ -176,7 +176,7 @@ class android_location_history_validator:
         if not time_str:
             return None
         try:
-            # Android format uses ISO 8601 with timezone
+            # Handle both iOS and Android time formats
             return parser.parse(time_str)
         except Exception:
             return None
@@ -199,6 +199,22 @@ class android_location_history_validator:
             return 0.0
         dt = (t2 - t1).total_seconds()
         return distance_meters / dt if dt > 0 else 0.0
+
+    @staticmethod
+    def parse_geo_string(geo_str: str) -> Optional[tuple]:
+        if not geo_str:
+            return None
+        try:
+            if "geo:" in geo_str:
+                # iOS format
+                coords = geo_str.split("geo:")[1]
+            else:
+                # Android format
+                coords = geo_str.replace("°", "")
+            lat_str, lon_str = coords.split(",")
+            return float(lat_str), float(lon_str)
+        except Exception:
+            return None
 
     def check_time_order(self, data: List[Dict[str, Any]]) -> float:
         if not data:
@@ -227,9 +243,17 @@ class android_location_history_validator:
         total_checked = 0
         
         for entry in data:
-            if "activities" in entry and entry["activities"]:
+            # Check for both iOS and Android formats
+            if "activities" in entry or "activity" in entry:
                 total_checked += 1
-                distance = entry.get("distance", 0)
+                
+                # Handle Android format
+                if "activities" in entry:
+                    distance = entry.get("distance", 0)
+                else:  # Handle iOS format
+                    activity = entry["activity"]
+                    distance = activity.get("distanceMeters", 0)
+
                 start_time = self.parse_time(entry.get("startTime"))
                 end_time = self.parse_time(entry.get("endTime"))
 
@@ -252,12 +276,34 @@ class android_location_history_validator:
         total_probs = 0
         
         for entry in data:
+            # Handle Android format
             if "activities" in entry:
                 for activity in entry["activities"]:
                     if "probability" in activity:
                         total_probs += 1
                         try:
                             prob = float(activity["probability"])
+                            if 0.0 <= prob <= 1.0:
+                                valid_probs += 1
+                        except ValueError:
+                            pass
+            
+            # Handle iOS format
+            for key in ["activity", "visit"]:
+                if key in entry:
+                    if "probability" in entry[key]:
+                        total_probs += 1
+                        try:
+                            prob = float(entry[key]["probability"])
+                            if 0.0 <= prob <= 1.0:
+                                valid_probs += 1
+                        except ValueError:
+                            pass
+                    
+                    if "topCandidate" in entry[key] and "probability" in entry[key]["topCandidate"]:
+                        total_probs += 1
+                        try:
+                            prob = float(entry[key]["topCandidate"]["probability"])
                             if 0.0 <= prob <= 1.0:
                                 valid_probs += 1
                         except ValueError:
@@ -272,6 +318,7 @@ class android_location_history_validator:
         total_checked = 0
         
         for entry in data:
+            # Handle Android format
             if "placeVisit" in entry:
                 place = entry["placeVisit"].get("location", {})
                 if "locationConfidence" in place:
@@ -282,10 +329,20 @@ class android_location_history_validator:
                             valid_levels += 1
                     except ValueError:
                         pass
+            
+            # Handle iOS format
+            if "visit" in entry and "hierarchyLevel" in entry["visit"]:
+                total_checked += 1
+                try:
+                    hl = int(entry["visit"]["hierarchyLevel"])
+                    if hl in self.allowed_hierarchy_levels:
+                        valid_levels += 1
+                except ValueError:
+                    pass
         
         return valid_levels / total_checked if total_checked > 0 else 1.0
 
-    def check_waypoints(self, data: List[Dict[str, Any]]) -> float:
+    def check_paths(self, data: List[Dict[str, Any]]) -> float:
         if not data:
             return 1.0
             
@@ -293,11 +350,11 @@ class android_location_history_validator:
         total_points = 0
         
         for entry in data:
+            # Handle Android waypoints
             if "activitySegment" in entry:
                 waypoints = entry["activitySegment"].get("waypointPath", {}).get("waypoints", [])
                 for waypoint in waypoints:
-                    total_points += 2  # Two checks per point: lat and lng
-                    
+                    total_points += 2
                     if "latE7" in waypoint and "lngE7" in waypoint:
                         try:
                             lat = float(waypoint["latE7"]) / 1e7
@@ -306,6 +363,20 @@ class android_location_history_validator:
                                 valid_points += 2
                         except ValueError:
                             pass
+            
+            # Handle iOS timeline paths
+            if "timelinePath" in entry and isinstance(entry["timelinePath"], list):
+                for path_node in entry["timelinePath"]:
+                    total_points += 2
+                    
+                    if self.parse_geo_string(path_node.get("point", "")):
+                        valid_points += 1
+                        
+                    try:
+                        float(path_node.get("durationMinutesOffsetFromStartTime"))
+                        valid_points += 1
+                    except (TypeError, ValueError):
+                        pass
         
         return valid_points / total_points if total_points > 0 else 1.0
 
@@ -335,6 +406,7 @@ class android_location_history_validator:
         total_checked = 0
         
         for entry in data:
+            # Handle Android format
             if "activitySegment" in entry:
                 activity_type = entry["activitySegment"].get("activityType", "").lower()
                 if not (activity_type and ("walking" in activity_type or "running" in activity_type)):
@@ -353,6 +425,27 @@ class android_location_history_validator:
                 
                 if ("walking" in activity_type and speed <= self.max_walk_speed) or \
                    ("running" in activity_type and speed <= self.max_run_speed):
+                    valid_modes += 1
+            
+            # Handle iOS format
+            if "activity" in entry and "topCandidate" in entry["activity"]:
+                mode = entry["activity"]["topCandidate"].get("type", "").lower()
+                if not (mode and ("walk" in mode or "run" in mode)):
+                    continue
+                    
+                total_checked += 1
+                start_time = self.parse_time(entry.get("startTime"))
+                end_time = self.parse_time(entry.get("endTime"))
+                
+                try:
+                    dist_m = float(entry["activity"].get("distanceMeters", 0))
+                except ValueError:
+                    dist_m = 0.0
+
+                speed = self.calc_speed(dist_m, start_time, end_time)
+                
+                if ("walk" in mode and speed <= self.max_walk_speed) or \
+                   ("run" in mode and speed <= self.max_run_speed):
                     valid_modes += 1
         
         return valid_modes / total_checked if total_checked > 0 else 1.0
@@ -380,18 +473,16 @@ class android_location_history_validator:
         return 0.0
 
     def validate(self, data: List[Dict[str, Any]]) -> float:
-        # Android data is already a list of segments
-        segments = data
-        print(f"\nStarting validation with {len(segments)} segments")
+        print(f"\nStarting validation with {len(data)} entries")
         
         checks = [
-            ("Time Order", self.check_time_order(segments)),
-            ("Suspicious Speed", self.check_suspicious_speed(segments)),
-            ("Probabilities", self.check_inconsistent_probabilities(segments)),
-            ("Hierarchy Levels", self.check_hierarchy_levels(segments)),
-            ("Waypoints", self.check_waypoints(segments)),
-            ("Regular Intervals", self.check_for_regular_intervals(segments)),
-            ("Local Travel", self.check_local_travel_vs_mode(segments))
+            ("Time Order", self.check_time_order(data)),
+            ("Suspicious Speed", self.check_suspicious_speed(data)),
+            ("Probabilities", self.check_inconsistent_probabilities(data)),
+            ("Hierarchy Levels", self.check_hierarchy_levels(data)),
+            ("Paths", self.check_paths(data)),
+            ("Regular Intervals", self.check_for_regular_intervals(data)),
+            ("Local Travel", self.check_local_travel_vs_mode(data))
         ]
         
         print("\nIndividual check results:")
@@ -406,7 +497,7 @@ class android_location_history_validator:
             print("Failed validation - returning -1")
             return -1
         
-        time_span = self.check_time_span(segments)
+        time_span = self.check_time_span(data)
         print(f"\nTime span in days: {time_span:.2f}")
         print(f"Time span score (divided by 60): {time_span/60.0:.3f}")
         
@@ -436,11 +527,11 @@ def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json
     else:
         total_yaml_entries = len(unique_yaml_data[0])
 
-    # Validate JSON data using android_location_history_validator
+    # Validate JSON data using location_history_validator
     location_history_quality_score = 0.0
     location_history_authenticity_score = 0.0
     if total_json_entries > 0:
-        validator = android_location_history_validator(max_speed_m_s=44.44)
+        validator = location_history_validator(max_speed_m_s=44.44)
         location_history_quality_score = validator.validate(semantic_segments_data)
 
         if location_history_quality_score < 0:
