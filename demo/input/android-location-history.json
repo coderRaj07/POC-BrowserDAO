@@ -1,0 +1,87 @@
+{
+    "semanticSegments": [
+        {
+            "startTime": "2024-11-14T17:30:00.000+05:30",
+            "endTime": "2024-11-14T19:30:00.000+05:30",
+            "timelinePath": [
+                {
+                    "point": "20.4415648\u00c2\u00b0, 85.9177847\u00c2\u00b0",
+                    "time": "2024-11-14T19:04:00.000+05:30"
+                },
+                {
+                    "point": "20.4389033\u00c2\u00b0, 85.9114467\u00c2\u00b0",
+                    "time": "2024-11-14T19:25:00.000+05:30"
+                }
+            ]
+        },
+        {
+            "startTime": "2024-11-14T19:36:46.000+05:30",
+            "endTime": "2024-11-15T17:45:07.000+05:30",
+            "startTimeTimezoneUtcOffsetMinutes": 330,
+            "endTimeTimezoneUtcOffsetMinutes": 330,
+            "visit": {
+                "hierarchyLevel": 0,
+                "probability": 0.8299999833106995,
+                "topCandidate": {
+                    "placeId": "ChIJ7buorBcNGToRsqvk_XVqKi4",
+                    "semanticType": "UNKNOWN",
+                    "probability": 0.49749138951301575,
+                    "placeLocation": {
+                        "latLng": "20.4407643\u00c2\u00b0, 85.9078006\u00c2\u00b0"
+                    }
+                }
+            }
+        },
+        {
+            "startTime": "2024-11-15T03:30:00.000+05:30",
+            "endTime": "2024-11-15T05:30:00.000+05:30",
+            "timelinePath": [
+                {
+                    "point": "20.4407531\u00c2\u00b0, 85.9068803\u00c2\u00b0",
+                    "time": "2024-11-15T03:48:00.000+05:30"
+                }
+            ]
+        },
+        {
+            "startTime": "2024-11-15T17:30:00.000+05:30",
+            "endTime": "2024-11-15T19:30:00.000+05:30",
+            "timelinePath": [
+                {
+                    "point": "20.4402181\u00c2\u00b0, 85.9079882\u00c2\u00b0",
+                    "time": "2024-11-15T17:47:00.000+05:30"
+                },
+                {
+                    "point": "20.4396467\u00c2\u00b0, 85.9114467\u00c2\u00b0",
+                    "time": "2024-11-15T17:57:00.000+05:30"
+                },
+                {
+                    "point": "20.441695\u00c2\u00b0, 85.9082997\u00c2\u00b0",
+                    "time": "2024-11-15T18:19:00.000+05:30"
+                },
+                {
+                    "point": "20.4410821\u00c2\u00b0, 85.9078189\u00c2\u00b0",
+                    "time": "2024-11-15T18:21:00.000+05:30"
+                }
+            ]
+        },
+        {
+            "startTime": "2024-11-15T17:45:07.000+05:30",
+            "endTime": "2024-11-15T18:21:08.000+05:30",
+            "startTimeTimezoneUtcOffsetMinutes": 330,
+            "endTimeTimezoneUtcOffsetMinutes": 330,
+            "activity": {
+                "start": {
+                    "latLng": "20.4409687\u00c2\u00b0, 85.9077285\u00c2\u00b0"
+                },
+                "end": {
+                    "latLng": "20.4410821\u00c2\u00b0, 85.9078189\u00c2\u00b0"
+                },
+                "distanceMeters": 1192.0,
+                "topCandidate": {
+                    "type": "WALKING",
+                    "probability": 0.0
+                }
+            }
+        }
+    ]
+}
