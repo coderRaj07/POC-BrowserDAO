@@ -1,597 +1,377 @@
-import logging
+import os
+import bs4
+import jinja2
+import redis
+import requests
+import gnupg
+import zipfile
+import io
 import pandas as pd
-import math
-from datetime import datetime
 import json
-from typing import List, Dict, Any, Optional, Union
-from collections import Counter
-from dateutil import parser
+import logging
+import yaml
+from deepdiff import DeepDiff  # Ensure deepdiff is installed
 
-
-# Constants as provided
-class Constants:
-    MIN_TIME_SPENT_MS = 2000  # 2 seconds
-    MAX_TIME_SPENT_MS = 7200000  # 2 hours
-    REQUIRED_FIELDS = {'url', 'timeSpent', 'title'}
-    LONG_DURATION_THRESHOLD_MS = 300000  # 5 minutes
-    MAX_QUALITY_SCORE = 60
-    MAX_AUTHENTICITY_SCORE = 40
-    HIGH_QUALITY_THRESHOLD = 80
-    MODERATE_QUALITY_THRESHOLD = 20
-    X0 = 0.5
-    K = 5
-
-def process_unique_csv_data(unique_csv_data):
-    unique_csv_data['DateTime'] = pd.to_datetime(unique_csv_data['DateTime'])
-    unique_csv_data = unique_csv_data.sort_values('DateTime', ascending=False)
-    
-    browsing_data = []
-    for i in range(len(unique_csv_data)):
-        entry = {
-            'url': unique_csv_data.iloc[i]['NavigatedToUrl'],
-            'title': unique_csv_data.iloc[i]['PageTitle'],
-            'timeSpent': 0
-        }
-        
-        if i < len(unique_csv_data) - 1:
-            time_diff = (unique_csv_data.iloc[i]['DateTime'] - 
-                        unique_csv_data.iloc[i + 1]['DateTime']).total_seconds() * 1000
-            entry['timeSpent'] = time_diff
-        
-        browsing_data.append(entry)
-    
-    return browsing_data
-
-def is_valid_url(url):
-    """Validate URL format"""
-    return url.startswith(('http://', 'https://'))
-
-def sigmoid(x, k=Constants.K, x0=Constants.X0):
-    """
-    Applies the sigmoid function to the normalized score.
-    """
-    z = k * (x - x0)
-    return 1 / (1 + math.exp(-z))
-
-def evaluate_quality(browsing_data):
-    quality_score = 0
-    weights = {
-        'time_spent': 30,
-        'completeness': 20,
-        'url_validity': 10
-    }
-
-    total_entries = len(browsing_data)
-    valid_time_entries = 0
-    completeness_issues = 0
-    valid_urls = 0
-
-    for entry in browsing_data:
-        # Check completeness
-        if not all(field in entry for field in ['url', 'timeSpent', 'title']):
-            completeness_issues += 1
-            continue
-
-        # Validate URL
-        if is_valid_url(entry['url']):
-            valid_urls += 1
-
-        # Validate time spent
-        if Constants.MIN_TIME_SPENT_MS <= entry['timeSpent'] <= Constants.MAX_TIME_SPENT_MS:
-            valid_time_entries += 1
-
-    if total_entries > 0:
-        quality_score += (valid_time_entries / total_entries) * weights['time_spent']
-        quality_score += ((total_entries - completeness_issues) / total_entries) * weights['completeness']
-        quality_score += (valid_urls / total_entries) * weights['url_validity']
-
-    return min(quality_score, Constants.MAX_QUALITY_SCORE) / 100
-
-def evaluate_authenticity(browsing_data):
-    authenticity_score = Constants.MAX_AUTHENTICITY_SCORE
-    total_entries = len(browsing_data)
-    short_visits = 0
-    long_visits = 0
-    
-    # Check time patterns
-    for entry in browsing_data:
-        time_spent = entry.get('timeSpent', 0)
-        
-        if time_spent < Constants.MIN_TIME_SPENT_MS:
-            short_visits += 1
-        if time_spent > Constants.LONG_DURATION_THRESHOLD_MS:
-            long_visits += 1
-
-    if total_entries > 0:
-        # Penalize for short visits
-        short_visit_ratio = short_visits / total_entries
-        authenticity_score -= short_visit_ratio * 20
-        
-        # Penalize for too many long visits
-        long_visit_ratio = long_visits / total_entries
-        if long_visit_ratio > 0.8:  # If more than 80% are long visits
-            authenticity_score -= 10
-
-    return max(authenticity_score, 0) / 100
-
-# Rest of the functions remain unchanged
-
-def compute_overall_score(quality_score, authenticity_score):
-    """
-    Combines the quality and authenticity scores.
-    """
-    overall_score = quality_score + authenticity_score
-    return min(overall_score, 1)
-
-def get_quality_label(overall_score):
-    """
-    Returns a quality label based on the overall score.
-    """
-    score_percentage = overall_score * 100
-    if score_percentage >= Constants.HIGH_QUALITY_THRESHOLD:
-        return "High Quality"
-    elif score_percentage >= Constants.MODERATE_QUALITY_THRESHOLD:
-        return "Moderate Quality"
-    else:
-        return "Low Quality"
-
-def process_and_evaluate_data(unique_csv_data):
-    """
-    Main function to process and evaluate browsing data from unique_csv_data.
-    """
+# Initialize Redis connection
+def get_redis_client():
     try:
-        # Process the unique CSV data
-        browsing_data = process_unique_csv_data(unique_csv_data)
-        
-        # Calculate scores
-        quality_score = evaluate_quality(browsing_data)
-        authenticity_score = evaluate_authenticity(browsing_data)
-        overall_score = compute_overall_score(quality_score, authenticity_score)
-        quality_label = get_quality_label(overall_score)
-        
-        # Prepare results
-        results = {
-            "total_entries": len(browsing_data),
-            "quality_score": quality_score,
-            "authenticity_score": authenticity_score,
-            "overall_score": overall_score,
-            "quality_label": quality_label
-        }
-        
-        return results
-        
-    except Exception as e:
-        raise Exception(f"Error processing browsing data: {str(e)}")
+        redis_client = redis.StrictRedis(
+            host=os.environ.get('REDIS_HOST', 'localhost'),
+            port=int(os.environ.get('REDIS_PORT', 6379)),
+            db=0,
+            password=os.environ.get('REDIS_PWD', None),
+            decode_responses=True,
+            socket_timeout=30,
+            retry_on_timeout=True
+        )
+        redis_client.ping()
+        return redis_client
+    except redis.ConnectionError:
+        logging.warning("Redis connection failed. Proceeding without caching.")
+        return None
 
+# Fetch file mappings from API
+# TODO: Remove comments
+def get_file_mappings(wallet_address):
+    # validator_base_api_url = os.environ.get('VALIDATOR_BASE_API_URL')
+    # endpoint = "/api/userinfo"
+    # url = f"{validator_base_api_url.rstrip('/')}{endpoint}"
 
-class location_history_validator:
-    def __init__(self, max_speed_m_s: float = 44.44, allowed_hierarchy_levels: List[int] = [0, 1, 2]):
-        self.max_speed_m_s = max_speed_m_s
-        self.allowed_hierarchy_levels = allowed_hierarchy_levels
-        self.max_walk_speed = 1.4
-        self.max_run_speed = 3.5
-        
-    @staticmethod
-    def parse_time(time_str: str) -> Optional[datetime]:
-        if not time_str:
-            return None
-        try:
-            # Handle both iOS and Android time formats
-            return parser.parse(time_str)
-        except Exception:
-            return None
+    # payload = {"walletAddress": wallet_address}  # Send walletAddress in the body
+    # headers = {"Content-Type": "application/json"}  # Set headers for JSON request
 
-    @staticmethod
-    def haversine_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        R = 6371_000  # Earth radius in meters
-        phi1, phi2 = math.radians(lat1), math.radians(lat2)
-        dphi = phi2 - phi1
-        dlambda = math.radians(lon2 - lon1)
+    # response = requests.post(url, json=payload, headers=headers)  # Make POST request
 
-        a = (math.sin(dphi / 2)**2 
-             + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2)**2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return R * c
+    # if response.status_code == 200:
+    #     return response.json()  # Return JSON response
+    # else:
+        # return []  # Return empty list in case of an error
+    return [{"fileId":1607662, "fileUrl":"https://drive.google.com/uc?export=download&id=1J3Lux-VZHPfUSMv6Hqh5Zf0iGPOOSsxZ"},
+            {"fileId":1607816, "fileUrl":"https://drive.google.com/uc?export=download&id=16xQSjQ1KGNwSJZTA84Ex2v6Z2IGAEDyo"}]
 
-    @staticmethod
-    def calc_speed(distance_meters: float, t1: datetime, t2: datetime) -> float:
-        if not t1 or not t2:
-            return 0.0
-        dt = (t2 - t1).total_seconds()
-        return distance_meters / dt if dt > 0 else 0.0
-
-    @staticmethod
-    def parse_geo_string(geo_str: str) -> Optional[tuple]:
-        if not geo_str:
-            return None
-        try:
-            if "geo:" in geo_str:
-                # iOS format
-                coords = geo_str.split("geo:")[1]
-            else:
-                # Android format
-                coords = geo_str.replace("°", "")
-            lat_str, lon_str = coords.split(",")
-            return float(lat_str), float(lon_str)
-        except Exception:
-            return None
-
-    def check_time_order(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-            
-        issues = 0
-        total_checks = len(data) * 2 - 1  # Two checks per entry plus transitions
-        
-        for i, entry in enumerate(data):
-            start = self.parse_time(entry.get("startTime"))
-            end = self.parse_time(entry.get("endTime"))
-            if start and end and end < start:
-                issues += 1
-            if i < len(data) - 1:
-                next_start = self.parse_time(data[i + 1].get("startTime"))
-                if end and next_start and next_start < end:
-                    issues += 1
-        
-        return 1.0 - (issues / total_checks)
-
-    def check_suspicious_speed(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-            
-        valid_entries = 0
-        total_checked = 0
-        
-        for entry in data:
-            # Check for both iOS and Android formats
-            if "activities" in entry or "activity" in entry:
-                total_checked += 1
-                
-                # Handle Android format
-                if "activities" in entry:
-                    distance = entry.get("distance", 0)
-                else:  # Handle iOS format
-                    activity = entry["activity"]
-                    distance = activity.get("distanceMeters", 0)
-
-                start_time = self.parse_time(entry.get("startTime"))
-                end_time = self.parse_time(entry.get("endTime"))
-
-                try:
-                    dist_m = float(distance) if distance else 0.0
-                except ValueError:
-                    dist_m = 0.0
-
-                speed = self.calc_speed(dist_m, start_time, end_time)
-                if speed <= self.max_speed_m_s:
-                    valid_entries += 1
-        
-        return valid_entries / total_checked if total_checked > 0 else 1.0
-
-    def check_inconsistent_probabilities(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-            
-        valid_probs = 0
-        total_probs = 0
-        
-        for entry in data:
-            # Handle Android format
-            if "activities" in entry:
-                for activity in entry["activities"]:
-                    if "probability" in activity:
-                        total_probs += 1
-                        try:
-                            prob = float(activity["probability"])
-                            if 0.0 <= prob <= 1.0:
-                                valid_probs += 1
-                        except ValueError:
-                            pass
-            
-            # Handle iOS format
-            for key in ["activity", "visit"]:
-                if key in entry:
-                    if "probability" in entry[key]:
-                        total_probs += 1
-                        try:
-                            prob = float(entry[key]["probability"])
-                            if 0.0 <= prob <= 1.0:
-                                valid_probs += 1
-                        except ValueError:
-                            pass
-                    
-                    if "topCandidate" in entry[key] and "probability" in entry[key]["topCandidate"]:
-                        total_probs += 1
-                        try:
-                            prob = float(entry[key]["topCandidate"]["probability"])
-                            if 0.0 <= prob <= 1.0:
-                                valid_probs += 1
-                        except ValueError:
-                            pass
-        
-        return valid_probs / total_probs if total_probs > 0 else 1.0
-
-    def check_hierarchy_levels(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-        valid_levels = 0
-        total_checked = 0
-        
-        for entry in data:
-            # Handle Android format
-            if "placeVisit" in entry:
-                place = entry["placeVisit"].get("location", {})
-                if "locationConfidence" in place:
-                    total_checked += 1
-                    try:
-                        confidence = float(place["locationConfidence"])
-                        if 0.0 <= confidence <= 1.0:
-                            valid_levels += 1
-                    except ValueError:
-                        pass
-            
-            # Handle iOS format
-            if "visit" in entry and "hierarchyLevel" in entry["visit"]:
-                total_checked += 1
-                try:
-                    hl = int(entry["visit"]["hierarchyLevel"])
-                    if hl in self.allowed_hierarchy_levels:
-                        valid_levels += 1
-                except ValueError:
-                    pass
-        
-        return valid_levels / total_checked if total_checked > 0 else 1.0
-
-    def check_paths(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-            
-        valid_points = 0
-        total_points = 0
-        
-        for entry in data:
-            # Handle Android waypoints
-            if "activitySegment" in entry:
-                waypoints = entry["activitySegment"].get("waypointPath", {}).get("waypoints", [])
-                for waypoint in waypoints:
-                    total_points += 2
-                    if "latE7" in waypoint and "lngE7" in waypoint:
-                        try:
-                            lat = float(waypoint["latE7"]) / 1e7
-                            lng = float(waypoint["lngE7"]) / 1e7
-                            if -90 <= lat <= 90 and -180 <= lng <= 180:
-                                valid_points += 2
-                        except ValueError:
-                            pass
-            
-            # Handle iOS timeline paths
-            if "timelinePath" in entry and isinstance(entry["timelinePath"], list):
-                for path_node in entry["timelinePath"]:
-                    total_points += 2
-                    
-                    if self.parse_geo_string(path_node.get("point", "")):
-                        valid_points += 1
-                        
-                    try:
-                        float(path_node.get("durationMinutesOffsetFromStartTime"))
-                        valid_points += 1
-                    except (TypeError, ValueError):
-                        pass
-        
-        return valid_points / total_points if total_points > 0 else 1.0
-
-    def check_for_regular_intervals(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-            
-        intervals = []
-        for i in range(len(data) - 1):
-            end_cur = self.parse_time(data[i].get("endTime"))
-            start_next = self.parse_time(data[i + 1].get("startTime"))
-            if end_cur and start_next:
-                intervals.append((start_next - end_cur).total_seconds())
-
-        if not intervals:
-            return 1.0
-
-        c = Counter(intervals)
-        uniqueness_ratio = len(c) / len(intervals)
-        return uniqueness_ratio
-
-    def check_local_travel_vs_mode(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 1.0
-            
-        valid_modes = 0
-        total_checked = 0
-        
-        for entry in data:
-            # Handle Android format
-            if "activitySegment" in entry:
-                activity_type = entry["activitySegment"].get("activityType", "").lower()
-                if not (activity_type and ("walking" in activity_type or "running" in activity_type)):
-                    continue
-                    
-                total_checked += 1
-                start_time = self.parse_time(entry["activitySegment"].get("startTime"))
-                end_time = self.parse_time(entry["activitySegment"].get("endTime"))
-                
-                try:
-                    dist_m = float(entry["activitySegment"].get("distance", 0))
-                except ValueError:
-                    dist_m = 0.0
-
-                speed = self.calc_speed(dist_m, start_time, end_time)
-                
-                if ("walking" in activity_type and speed <= self.max_walk_speed) or \
-                   ("running" in activity_type and speed <= self.max_run_speed):
-                    valid_modes += 1
-            
-            # Handle iOS format
-            if "activity" in entry and "topCandidate" in entry["activity"]:
-                mode = entry["activity"]["topCandidate"].get("type", "").lower()
-                if not (mode and ("walk" in mode or "run" in mode)):
-                    continue
-                    
-                total_checked += 1
-                start_time = self.parse_time(entry.get("startTime"))
-                end_time = self.parse_time(entry.get("endTime"))
-                
-                try:
-                    dist_m = float(entry["activity"].get("distanceMeters", 0))
-                except ValueError:
-                    dist_m = 0.0
-
-                speed = self.calc_speed(dist_m, start_time, end_time)
-                
-                if ("walk" in mode and speed <= self.max_walk_speed) or \
-                   ("run" in mode and speed <= self.max_run_speed):
-                    valid_modes += 1
-        
-        return valid_modes / total_checked if total_checked > 0 else 1.0
-
-    def check_time_span(self, data: List[Dict[str, Any]]) -> float:
-        if not data:
-            return 0.0
-        
-        earliest_time = None
-        latest_time = None
-        
-        for entry in data:
-            start = self.parse_time(entry.get("startTime"))
-            end = self.parse_time(entry.get("endTime"))
-            
-            if start:
-                if earliest_time is None or start < earliest_time:
-                    earliest_time = start
-            if end:
-                if latest_time is None or end > latest_time:
-                    latest_time = end
-        
-        if earliest_time and latest_time:
-            return ((latest_time - earliest_time).total_seconds())/86400.0
-        return 0.0
-
-    def validate(self, data: List[Dict[str, Any]]) -> float:
-        print(f"\nStarting validation with {len(data)} entries")
-        
-        checks = [
-            ("Time Order", self.check_time_order(data)),
-            ("Suspicious Speed", self.check_suspicious_speed(data)),
-            ("Probabilities", self.check_inconsistent_probabilities(data)),
-            ("Hierarchy Levels", self.check_hierarchy_levels(data)),
-            ("Paths", self.check_paths(data)),
-            ("Regular Intervals", self.check_for_regular_intervals(data)),
-            ("Local Travel", self.check_local_travel_vs_mode(data))
-        ]
-        
-        print("\nIndividual check results:")
-        for name, value in checks:
-            print(f"{name}: {value:.3f}")
-            
-        valid = sum(value for _, value in checks)
-        print(f"\nSum of all checks: {valid:.3f}")
-        print(f"Minimum threshold: {7*0.1}")
-        
-        if valid < (7*0.1):
-            print("Failed validation - returning -1")
-            return -1
-        
-        time_span = self.check_time_span(data)
-        print(f"\nTime span in days: {time_span:.2f}")
-        print(f"Time span score (divided by 60): {time_span/60.0:.3f}")
-        
-        final_score = min(time_span/60.0, 1.0)
-        print(f"Final clamped score: {final_score:.3f}")
-        
-        return final_score
-
-
-def process_files_for_quality_n_authenticity_scores(unique_csv_data, unique_json_data, unique_yaml_data):
-
-    if unique_csv_data is None or unique_csv_data.empty:
-        total_csv_entries = 0
-    else:
-        total_csv_entries = unique_csv_data.drop_duplicates().shape[0]
-
-    if not unique_json_data or not isinstance(unique_json_data, list) or not unique_json_data[0]:
-        semantic_segments_data = []
-        total_json_entries = 0
-    else:
-        logging.info(f"unique json data: {unique_json_data[0].get('semanticSegments')}")
-        semantic_segments_data = unique_json_data[0].get("semanticSegments", [])
-        total_json_entries = len(semantic_segments_data)
-    
-    if not unique_yaml_data or not isinstance(unique_yaml_data, list) or not unique_yaml_data[0]:
-        total_yaml_entries = 0
-    else:
-        total_yaml_entries = len(unique_yaml_data[0])
-
-    # Validate JSON data using location_history_validator
-    location_history_quality_score = 0.0
-    location_history_authenticity_score = 0.0
-    if total_json_entries > 0:
-        validator = location_history_validator(max_speed_m_s=44.44)
-        location_history_quality_score = validator.validate(semantic_segments_data)
-
-        if location_history_quality_score < 0:
-            location_history_quality_score = 0.0
-            location_history_authenticity_score = 0.0
+# Download and decrypt file
+def download_and_decrypt(file_url, gpg_signature):
+    response = requests.get(file_url)
+    if response.status_code == 200:
+        gpg = gnupg.GPG()
+        decrypted_data = gpg.decrypt(response.content, passphrase=gpg_signature)
+        if decrypted_data.ok:
+            return decrypted_data.data
         else:
-            location_history_authenticity_score = 1.0  # Default authenticity score for location data
-
-    # Evaluate unique CSV data using process_and_evaluate_data
-    browser_history_quality_score = 0.0
-    browser_history_authenticity_score = 0.0
-    if total_csv_entries > 0:
-        browser_history_score_details = process_and_evaluate_data(unique_csv_data)
-        browser_history_quality_score = browser_history_score_details.get("quality_score", 0)
-        browser_history_authenticity_score = browser_history_score_details.get("authenticity_score", 0)
-
-    # Evaluate quality of YAML data
-    if total_yaml_entries > 10:
-        yaml_quality_score = 1.0 
-    elif 4 < total_yaml_entries <= 9:
-        yaml_quality_score = 1.0 * 0.5
-    elif 1 < total_yaml_entries <= 4:
-        yaml_quality_score = 1.0 * 0.10
+            logging.error("Decryption failed.")
+            return None
     else:
-        yaml_quality_score = 0.0
+        logging.error(f"Failed to download file: {response.status_code}")
+        return None
 
-    if yaml_quality_score > 0 : 
-        yaml_authenticity_score = 1.0
-    else:
-        yaml_authenticity_score = 0.0
+# Jinja2 Template for YAML output
+yaml_template = """
+bookmarks:
+{% for dt in bookmarks %}
+  - name: "{{ dt.name }}"
+    add_date: "{{ dt.add_date }}"
+    last_modified: "{{ dt.last_modified | default('') }}"
+    personal_toolbar_folder: "{{ dt.personal_toolbar_folder | default('false') }}"
+    children:
+      {% for child in dt.children %}
+      - title: "{{ child.title }}"
+        url: "{{ child.url }}"
+        add_date: "{{ child.add_date }}"
+      {% endfor %}
+{% endfor %}
+"""
 
-    # Determine final quality and authenticity scores
-    final_quality_score = 0.0
-    final_authenticity_score = 0.0
-
-    if total_csv_entries > 0 and total_json_entries > 0:
-        final_quality_score = (
-            (browser_history_quality_score * total_csv_entries) + (location_history_quality_score * total_json_entries) + (yaml_quality_score * total_yaml_entries)
-        ) / (total_csv_entries + total_json_entries + total_yaml_entries)
-
-        final_authenticity_score = (
-            (browser_history_authenticity_score * total_csv_entries) + (location_history_authenticity_score * total_json_entries + yaml_authenticity_score * total_yaml_entries)
-        ) / (total_csv_entries + total_json_entries + total_yaml_entries)
-
-    elif total_csv_entries > 0:
-        final_quality_score = browser_history_quality_score
-        final_authenticity_score = browser_history_authenticity_score
-
-    elif total_json_entries > 0:
-        final_quality_score = location_history_quality_score
-        final_authenticity_score = location_history_authenticity_score
+def parse_bookmarks(html_content):
+    soup = bs4.BeautifulSoup(html_content, "html.parser")
+    bookmarks = []
     
-    elif total_yaml_entries > 0:
-        final_quality_score = yaml_quality_score
-        final_authenticity_score = yaml_authenticity_score
+    for dt in soup.find_all("dt"):  # Find all bookmark folders and links
+        h3 = dt.find("h3")
+        if h3:  # It's a folder
+            folder = {
+                "name": h3.text,
+                "add_date": h3.get("add_date", ""),
+                "last_modified": h3.get("last_modified", ""),
+                "personal_toolbar_folder": h3.get("personal_toolbar_folder", "false"),
+                "children": []
+            }
+            
+            dl = dt.find_next("dl")
+            if dl:
+                for link in dl.find_all("a"):  # Extract links inside folder
+                    folder["children"].append({
+                        "title": link.text,
+                        "url": link["href"],
+                        "add_date": link.get("add_date", "")
+                    })
+            
+            bookmarks.append(folder)
+    
+    return bookmarks
 
-    logging.info(f"Final Quality Score: {final_quality_score}, Final Authenticity Score: {final_authenticity_score}, Total CSV Entries: {total_csv_entries}, Total JSON Entries: {total_json_entries}, Browser History Quality Score: {browser_history_quality_score}, Browser History Authenticity Score: {browser_history_authenticity_score}, Location History Quality Score: {location_history_quality_score}, Location History Authenticity Score: {location_history_authenticity_score}, Total YAML Entries: {total_yaml_entries}, YAML Quality Score: {yaml_quality_score}, YAML Authenticity Score: {yaml_authenticity_score}")
+def convert_to_yaml(bookmarks):
+    template = jinja2.Template(yaml_template)
+    return template.render(bookmarks=bookmarks)
 
-    # Return final scores
+# Extract files from ZIP data
+def extract_files_from_zip(zip_data):
+    csv_data_frames = []
+    json_data_list = []
+    yaml_data_list = []
+    
+    with zipfile.ZipFile(io.BytesIO(zip_data), 'r') as zip_ref:
+        for file_name in zip_ref.namelist():
+            with zip_ref.open(file_name) as file:
+                content = file.read().decode("utf-8")
+                if file_name.endswith('.csv'):
+                    df = pd.read_csv(io.StringIO(content))
+                    csv_data_frames.append(df)
+                elif file_name.endswith('.json'):
+                    json_data = json.loads(content)
+                    json_data_list.append(json_data)
+                elif file_name.endswith('.html'):
+                    bookmarks = parse_bookmarks(content)
+                    yaml_data = convert_to_yaml(bookmarks)
+                    yaml_data_list.append(yaml.safe_load(yaml_data))
+    
+    combined_csv_data = pd.concat(csv_data_frames, ignore_index=True) if csv_data_frames else pd.DataFrame()
+    return combined_csv_data, json_data_list, yaml_data_list
+
+# Process HTML files in input directory
+def process_html_files(input_dir):
+    yaml_data_list = []
+    local_html_files = [f for f in os.listdir(input_dir) if f.endswith('.html')]
+    for html_file in local_html_files:
+        file_path = os.path.join(input_dir, html_file)
+        with open(file_path, "r", encoding="utf-8") as file:
+            content = file.read()
+            bookmarks = parse_bookmarks(content)
+            yaml_data = convert_to_yaml(bookmarks)
+            yaml_data_list.append(yaml.safe_load(yaml_data))
+    return yaml_data_list
+
+# Convert CSV to required format
+def convert_csv_to_required_format(df):
+    required_columns = ["DateTime", "NavigatedToUrl", "PageTitle"]
+    if not all(col in df.columns for col in required_columns):
+        # Check for alternative columns
+        alternative_columns = ["url", "url_clean", "url_domain", "title", "time", "hour", "day_of_week", "is_weekend", "day_of_month", "week_of_month", "month_of_year", "total_history_days", "seconds_until_next_visit_url", "seconds_until_next_visit_url_clean", "seconds_until_next_visit_domain", "seconds_until_next_visit", "page_transition", "id", "ref_id", "is_local", "client_id", "updated_at"]
+        if all(col in df.columns for col in alternative_columns):
+            df["DateTime"] = pd.to_datetime(df["time"]).dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            df["NavigatedToUrl"] = df["url"]
+            df["PageTitle"] = df["title"]
+            df = df[["DateTime", "NavigatedToUrl", "PageTitle"]]
+        else:
+            logging.error("CSV does not have the required columns or alternative columns.")
+            return pd.DataFrame()
+    return df
+
+# Main processing function
+def process_files_for_uniqueness(curr_file_id, input_dir, wallet_address):
+    gpg_signature = os.environ.get("SIGNATURE")
+    redis_client = get_redis_client()
+    combined_csv_data = pd.DataFrame()
+    combined_json_data = []
+    combined_yaml_data = []
+    
+    logging.info(f"Processing files for wallet address {wallet_address}")
+    # Retrieve file mappings from API
+    file_mappings = get_file_mappings(wallet_address)
+
+    if redis_client:
+        # Check Redis for cached data
+        for file_info in file_mappings:
+            file_id = file_info.get("fileId")
+            if redis_client.exists(file_id):
+                stored_csv_data = redis_client.hget(file_id, "browser_history_csv_data")
+                stored_json_data = redis_client.hget(file_id, "location_history_json_data")
+                stored_html_data = redis_client.hget(file_id, "bookmarks_html_data")
+                if stored_csv_data:
+                    df = pd.read_json(io.StringIO(stored_csv_data))
+                    combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True)
+                if stored_json_data:
+                    json_data = json.loads(stored_json_data)
+                    combined_json_data.extend(json_data)
+                if stored_html_data:
+                    bookmarks = parse_bookmarks(stored_html_data)
+                    yaml_data = convert_to_yaml(bookmarks)
+                    combined_yaml_data.append(yaml.safe_load(yaml_data))
+
+                if not stored_csv_data and not stored_json_data and not stored_html_data:
+                    file_url = file_info.get("fileUrl")
+                    if not file_url:
+                        logging.warning(f"Skipping invalid fileUrl for fileId {file_id}")
+                        continue
+
+                    decrypted_data = download_and_decrypt(file_url, gpg_signature)
+
+                    if not decrypted_data:  # Skip if download failed
+                        logging.warning(f"Skipping file {file_url} due to download error.")
+                        continue  # Move to the next file
+                    if decrypted_data:
+                        df, json_data_list, yaml_data_list = extract_files_from_zip(decrypted_data) # returns pd, json_list, yaml_list
+                        if df is not None:
+                            combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True) 
+                        if json_data_list:
+                            combined_json_data.extend(json_data_list)
+                        if yaml_data_list:
+                            combined_yaml_data.extend(yaml_data_list)
+            else:
+                file_url = file_info.get("fileUrl")
+                if not file_url:
+                    logging.warning(f"Skipping invalid fileUrl for fileId {file_id}")
+                    continue
+                decrypted_data = download_and_decrypt(file_url, gpg_signature)
+                if not decrypted_data:  # Skip if download failed
+                    logging.warning(f"Skipping file {file_url} due to download error.")
+                    continue  # Move to the next file
+                if decrypted_data:
+                    df, json_data_list, yaml_data_list = extract_files_from_zip(decrypted_data)
+                    if df is not None:
+                        combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True) 
+                    if json_data_list:
+                        combined_json_data.extend(json_data_list)
+                    if yaml_data_list:
+                        combined_yaml_data.extend(yaml_data_list)
+    else:
+        # Download, decrypt, and extract files
+        for file_info in file_mappings:
+            file_url = file_info.get("fileUrl")
+            if not file_url:
+                logging.warning(f"Skipping invalid fileUrl for fileId {file_info.get('fileId')}")
+                continue
+            decrypted_data = download_and_decrypt(file_url, gpg_signature)
+            if not decrypted_data:  # Skip if download failed
+                logging.warning(f"Skipping file {file_url} due to download error.")
+                continue  # Move to the next file
+            if decrypted_data:
+                df, json_data_list, yaml_data_list = extract_files_from_zip(decrypted_data)
+                if df is not None:
+                    combined_csv_data = pd.concat([combined_csv_data, df], ignore_index=True) 
+                if json_data_list:
+                    combined_json_data.extend(json_data_list)
+                if yaml_data_list:
+                    combined_yaml_data.extend(yaml_data_list)
+
+    # Process current input directory CSVs
+    curr_file_csv_data = pd.DataFrame()
+    local_csv_files = [f for f in os.listdir(input_dir) if f.endswith('.csv')]
+    for csv_file in local_csv_files:
+        file_path = os.path.join(input_dir, csv_file)
+        df = pd.read_csv(file_path)
+        df = convert_csv_to_required_format(df)
+        curr_file_csv_data = pd.concat([curr_file_csv_data, df], ignore_index=True)
+
+    # Process current input directory JSONs
+    curr_file_json_data = []
+    local_json_files = [f for f in os.listdir(input_dir) if f.endswith('.json')]
+    for json_file in local_json_files:
+        file_path = os.path.join(input_dir, json_file)
+        with open(file_path, 'r') as file:
+            json_data = json.load(file)
+            
+            # If the JSON data is a list, wrap it in an object with "semanticSegments" as the key
+            if isinstance(json_data, list):
+                json_data = {"semanticSegments": json_data}
+            
+            curr_file_json_data.append(json_data)
+        
+        # Overwrite the file with the new format if it was a list
+        with open(file_path, 'w') as file:
+            json.dump(json_data, file, indent=4)
+
+    print("JSON files processed and formatted successfully.")
+    
+    # Process current input directory HTMLs
+    curr_yaml_data = process_html_files(input_dir)
+
+    # Ensure both have the same datetime format
+    if not curr_file_csv_data.empty:
+        curr_file_csv_data["DateTime"] = pd.to_datetime(curr_file_csv_data["DateTime"], utc=True)
+    if not combined_csv_data.empty:
+        combined_csv_data["DateTime"] = pd.to_datetime(combined_csv_data["DateTime"], utc=True)
+
+    # Find unique entries in curr_file_csv_data that are not in combined_csv_data and curr_file_csv_data exists
+    unique_curr_csv_data = curr_file_csv_data
+    if not combined_csv_data.empty:
+        common_columns = curr_file_csv_data.columns.intersection(combined_csv_data.columns)
+        if not common_columns.empty:
+            unique_curr_csv_data = curr_file_csv_data.merge(combined_csv_data[common_columns], how="left", indicator=True).query('_merge == "left_only"').drop(columns=["_merge"])
+        else:
+            logging.warning("No common columns found between current and combined CSV data. Skipping merge operation.")
+
+    # Identify unique JSON entries
+    unique_curr_json_data = []
+    for curr_json in curr_file_json_data:
+        is_unique = True
+        for combined_json in combined_json_data:
+            if not DeepDiff(curr_json, combined_json, ignore_order=True):
+                is_unique = False
+                break
+        if is_unique:
+            unique_curr_json_data.append(curr_json)
+
+    # Identify unique YAML entries
+    unique_curr_yaml_data = []
+    for curr_yaml in curr_yaml_data:
+        is_unique = True
+        for combined_yaml in combined_yaml_data:
+            if not DeepDiff(curr_yaml, combined_yaml, ignore_order=True):
+                is_unique = False
+                break
+        if is_unique:
+            unique_curr_yaml_data.append(curr_yaml)
+
+    # Calculate uniqueness scores
+    total_csv_entries = curr_file_csv_data.drop_duplicates().shape[0]
+    unique_csv_entries = unique_curr_csv_data.drop_duplicates().shape[0]
+    csv_uniqueness_score = unique_csv_entries / total_csv_entries if total_csv_entries > 0 else None
+
+    total_json_entries = len({json.dumps(entry, sort_keys=True) for entry in curr_file_json_data})
+    unique_json_entries = len({json.dumps(entry, sort_keys=True) for entry in unique_curr_json_data})
+    json_uniqueness_score = unique_json_entries / total_json_entries if total_json_entries > 0 else None
+
+    total_yaml_entries = len({json.dumps(entry, sort_keys=True) for entry in curr_yaml_data})
+    unique_yaml_entries = len({json.dumps(entry, sort_keys=True) for entry in unique_curr_yaml_data})
+    yaml_uniqueness_score = unique_yaml_entries / total_yaml_entries if total_yaml_entries > 0 else None
+
+    # Determine final uniqueness score
+    final_uniqueness_score = None
+    if csv_uniqueness_score is not None and json_uniqueness_score is not None and yaml_uniqueness_score is not None:
+        # Normalize based on data volume
+        final_uniqueness_score = (
+            (csv_uniqueness_score * total_csv_entries) + 
+            (json_uniqueness_score * total_json_entries) + 
+            (yaml_uniqueness_score * total_yaml_entries)
+        ) / (total_csv_entries + total_json_entries + total_yaml_entries)
+    elif csv_uniqueness_score is not None:
+        final_uniqueness_score = csv_uniqueness_score
+    elif json_uniqueness_score is not None:
+        final_uniqueness_score = json_uniqueness_score
+    elif yaml_uniqueness_score is not None:
+        final_uniqueness_score = yaml_uniqueness_score
+
+    # Cache current file data in Redis
+    if redis_client:
+        redis_client.hset(curr_file_id, mapping={
+            "browser_history_csv_data": curr_file_csv_data.to_json(),
+            "location_history_json_data": json.dumps(curr_file_json_data),
+            "bookmarks_yaml_data": json.dumps(curr_yaml_data)
+        })
+    
+    logging.info(f"Current file data stored in Redis under key {curr_file_id}")
+    logging.info(f"Unique CSV data: {unique_curr_csv_data}")
+    logging.info(f"Unique JSON data: {unique_curr_json_data}")
+    logging.info(f"Unique YAML data: {unique_curr_yaml_data}")
+    logging.info(f"Final Uniqueness Score: {final_uniqueness_score}")
+
+    # Return unique data and scores
     return {
-        "quality_score": final_quality_score,
-        "authenticity_score": final_authenticity_score
+        "unique_csv_data": unique_curr_csv_data,
+        "unique_json_data": unique_curr_json_data,
+        "unique_yaml_data": unique_curr_yaml_data,
+        "curr_csv_data": curr_file_csv_data,
+        "curr_json_data": curr_file_json_data,
+        "curr_yaml_data": curr_yaml_data,
+        "uniqueness_score": final_uniqueness_score
     }
